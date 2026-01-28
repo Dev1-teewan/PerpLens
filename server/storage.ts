@@ -1,38 +1,52 @@
-import { type User, type InsertUser } from "@shared/schema";
-import { randomUUID } from "crypto";
-
-// modify the interface with any CRUD methods
-// you might need
+import { db } from "./db";
+import {
+  strategies,
+  dailyMetrics,
+  positions,
+  type Strategy,
+  type DailyMetric,
+  type Position,
+  type StrategyResponse
+} from "@shared/schema";
+import { eq, desc } from "drizzle-orm";
 
 export interface IStorage {
-  getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  getStrategyByWallet(walletSubkey: string): Promise<StrategyResponse | undefined>;
+  // Seed method
+  createStrategy(strategy: any): Promise<Strategy>;
+  createDailyMetrics(metrics: any[]): Promise<void>;
+  createPositions(pos: any[]): Promise<void>;
 }
 
-export class MemStorage implements IStorage {
-  private users: Map<string, User>;
-
-  constructor() {
-    this.users = new Map();
+export class DatabaseStorage implements IStorage {
+  async getStrategyByWallet(walletSubkey: string): Promise<StrategyResponse | undefined> {
+    const strategy = await db.query.strategies.findFirst({
+      where: eq(strategies.walletSubkey, walletSubkey),
+      with: {
+        dailyMetrics: {
+          orderBy: [desc(dailyMetrics.date)],
+          limit: 100 // Last 100 days as requested
+        },
+        positions: true
+      }
+    });
+    return strategy;
   }
 
-  async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
+  async createStrategy(strategy: any): Promise<Strategy> {
+    const [newStrategy] = await db.insert(strategies).values(strategy).returning();
+    return newStrategy;
   }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
+  async createDailyMetrics(metrics: any[]): Promise<void> {
+    if (metrics.length === 0) return;
+    await db.insert(dailyMetrics).values(metrics);
   }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
-    return user;
+  async createPositions(pos: any[]): Promise<void> {
+    if (pos.length === 0) return;
+    await db.insert(positions).values(pos);
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();
