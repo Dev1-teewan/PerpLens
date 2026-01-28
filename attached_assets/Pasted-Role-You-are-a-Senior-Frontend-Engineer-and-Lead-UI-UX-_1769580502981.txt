@@ -1,0 +1,73 @@
+Role: You are a Senior Frontend Engineer and Lead UI/UX Designer specializing in high-performance DeFi analytics (e.g., Drift, Hyperliquid, or dYdX style).
+
+Project Goal: Build a "Cash and Carry / Delta Neutral" PnL Dashboard. This dashboard isolates "Basis Yield" (funding earned) from price volatility. The user is long spot and short perps; we want to visualize the steady accumulation of funding.
+
+I. Visual Identity (Drift-Inspired)
+
+Theme: Deep Dark Mode. Background: #0b0b0e. Card Backgrounds: #141416 with thin borders (#1c1c1f).
+
+Palette: * Profit/Funding: Emerald Green (#27d388)
+
+Loss: Rose Red (#ff4d4d)
+
+Accents: Muted Purple (#8e52ff) for portfolio lines.
+
+Typography: Modern sans-serif (Inter or Geist).
+
+Style: Rounded cards, subtle gradients, soft shadows. Minimalist "Quant-style" interface.
+
+II. Layout Architecture
+
+Header & Global Controls:
+
+Title: "Strategy Overview"
+
+Input: "Enter your wallet subkey" (Styled as a clean, dark input field).
+
+Timeframe Toggle: 24H, 7D, 30D, 90D. (Restrict data logic to 100 days).
+
+Hero Metrics (Top Row):
+
+Total Funding PnL: Large green USD value.
+
+Current Strategy APY: Percentage representing net basis yield.
+
+Active Notional Exposure: Total USD size of all hedged pairs.
+
+The "PnL Engine" (Main Dashboard Component): A tabbed card interface (Cumulative PnL, Daily PnL, Calendar):
+
+Tab A: Cumulative PnL (Default): Smooth area chart (green gradient fill) showing steady portfolio growth. Tooltip shows: Date, Daily PnL, Cumulative PnL, and Funding Earned.
+
+Tab B: Daily PnL: A bar chart. Green bars for profit, red for loss. Tooltip shows: Date, Daily Realized PnL, and Daily Funding.
+
+Tab C: Calendar View: A monthly heatmap grid. Cells are color-coded (Dark Green for high profit, Dark Red for loss). Each cell shows the day number and PnL value. Interaction: Clicking a day opens a side panel with a pair-level breakdown for that specific date.
+
+Delta-Neutral Pair Table (Bottom Section): A list of all active pairs (e.g., SOL-PERP / SPOT).
+
+Columns: Pair Name (with icon), Hedge Type (Badge: "Cash & Carry"), Notional Size, Net PnL, Funding Earned, ROI %, Sparkline Trend, and Status (Badge: "Open").
+
+Row Interaction: Clicking a row expands an inline drawer/accordion showing:
+
+Detailed "Legs" (Long vs Short) with entry/current prices.
+
+A pair-specific cumulative PnL chart.
+
+III. Interaction & UX Details
+
+Animations: Use subtle transitions for tab switching and timeframe changes.
+
+Formatting: All numbers formatted as $1,234.56.
+
+Tooltips: Sticky, high-contrast tooltips that follow the cursor on charts.
+
+Responsiveness: Desktop-first, but cards must stack elegantly for mobile.
+
+IV. Technical Implementation
+
+Framework: React with Tailwind CSS.
+
+Icons: Lucide-react.
+
+Charts: Recharts or shadcn/ui chart components.
+
+Data: Use Mock Data representing a successful delta-neutral strategy (low volatility, consistent daily funding gains).
