@@ -26,14 +26,16 @@ export interface Position {
   strategyId: number;
   pairName: string;
   hedgeType: string;
-  notionalSize: string;
+  notionalSize: string;         // Token amount
+  notionalValue: string;        // Token amount × current price (USD)
   netPnl: string;
   fundingEarned: string;
   roi: string;
   status: string;
   longEntryPrice: string;
   shortEntryPrice: string;
-  currentPrice: string;
+  currentPrice: string;         // From candles API
+  marketDailyMetrics?: DailyMetric[];  // Per-market PnL history for sparkline
 }
 
 export interface StrategyResponse extends Strategy {

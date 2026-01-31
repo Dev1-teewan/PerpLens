@@ -1,0 +1,82 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Fonts */
+  --font-body: 'Inter', sans-serif;
+  --font-display: 'Inter', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  /* Color Palette - HSL Space Separated */
+
+  /* Deep Dark Backgrounds */
+  --background: 240 10% 4%;     /* #0b0b0e - Main background */
+  --card: 240 6% 8%;            /* #141416 - Card background */
+  --card-foreground: 0 0% 100%;
+
+  /* Text */
+  --foreground: 0 0% 100%;
+  --muted: 240 5% 15%;          /* #252528 */
+  --muted-foreground: 240 5% 65%; /* #a1a1aa */
+
+  /* Borders */
+  --border: 240 5% 12%;         /* #1c1c1f */
+
+  /* Brand Colors */
+  --primary: 154 69% 49%;       /* #27d388 - Emerald Green (Profit/Brand) */
+  --primary-foreground: 240 10% 4%;
+
+  --destructive: 0 100% 65%;    /* #ff4d4d - Rose Red (Loss) */
+  --destructive-foreground: 0 0% 100%;
+
+  --accent: 261 100% 66%;       /* #8e52ff - Muted Purple */
+  --accent-foreground: 0 0% 100%;
+
+  --secondary: 240 4% 16%;
+  --secondary-foreground: 0 0% 98%;
+
+  --popover: 240 6% 8%;
+  --popover-foreground: 0 0% 100%;
+
+  --input: 240 5% 12%;
+  --ring: 154 69% 49%;
+
+  --radius: 0.75rem;
+}
+
+@layer base {
+  body {
+    @apply bg-background text-foreground antialiased font-body;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display tracking-tight font-semibold;
+  }
+}
+
+@layer utilities {
+  .text-glow {
+    text-shadow: 0 0 20px hsla(var(--primary) / 0.5);
+  }
+
+  .glass-card {
+    @apply bg-card/50 backdrop-blur-xl border border-border/50;
+  }
+
+  /* Custom scrollbar for data tables */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-muted-foreground/20 rounded-full hover:bg-muted-foreground/40 transition-colors;
+  }
+}
