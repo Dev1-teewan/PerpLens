@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { useStrategy, type Timeframe } from "@/hooks/use-strategies";
+import { useUserState } from "@/hooks/use-user-state";
 import { MetricCard } from "@/components/MetricCard";
 import { PnLCharts } from "@/components/PnLCharts";
 import { PositionsTable } from "@/components/PositionsTable";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   Loader2,
   Search,
@@ -19,8 +19,18 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
-const SEARCH_HISTORY_KEY = "pnl-dashboard-search-history";
+const SEARCH_HISTORY_KEY = "drift:search-history";
 const MAX_HISTORY_ITEMS = 10;
+
+/**
+ * Format a number as currency with 2 decimal places
+ */
+function formatCurrency(value: number): string {
+  return value.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
 
 function loadSearchHistory(): string[] {
   try {
@@ -70,8 +80,30 @@ export default function Home() {
     setShowDropdown(true);
   };
 
-  const { data, isLoading, isLoadingMore, isError, refetch, isRefetching } =
-    useStrategy(walletKey, timeframe);
+  const {
+    data,
+    isLoading,
+    loadingProgress,
+    isError,
+    error,
+    refetch,
+    isRefetching,
+    probeSuggestedTimeframe,
+    loadedTimeframes,
+    currentlyLoadingTimeframe,
+    currentlyLoadingTimeframes,
+    hasComparisonData,
+    hasCompletedInitialLoad,
+  } = useStrategy(walletKey, timeframe);
+
+  // When 12-month probe finds data, auto-switch to 1Y so user sees the range that has data
+  useEffect(() => {
+    if (probeSuggestedTimeframe) {
+      setTimeframe(probeSuggestedTimeframe);
+    }
+  }, [probeSuggestedTimeframe]);
+
+  const { userState } = useUserState(walletKey);
 
   // Load search history on mount
   useEffect(() => {
@@ -88,7 +120,10 @@ export default function Home() {
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node)
+      ) {
         setShowDropdown(false);
         setSelectedIndex(-1);
       }
@@ -103,7 +138,8 @@ export default function Home() {
   );
 
   const addToSearchHistory = (address: string) => {
-    if (!address || isMockAccount(address) || address === MOCK_ACCOUNT_KEY) return;
+    if (!address || isMockAccount(address) || address === MOCK_ACCOUNT_KEY)
+      return;
 
     const newHistory = [
       address,
@@ -127,6 +163,10 @@ export default function Home() {
     const key = isMockAccount(trimmedValue) ? MOCK_ACCOUNT_KEY : trimmedValue;
     if (trimmedValue) {
       setShowErrorDialog(false);
+      // Reset to default timeframe when searching new address
+      if (key !== walletKey) {
+        setTimeframe("7D");
+      }
       setWalletKey(key);
       if (!isMockAccount(trimmedValue)) addToSearchHistory(trimmedValue);
       setShowDropdown(false);
@@ -136,6 +176,10 @@ export default function Home() {
 
   const handleSelectHistory = (address: string) => {
     setInputValue(address);
+    // Reset to default timeframe when selecting different address
+    if (address !== walletKey) {
+      setTimeframe("7D");
+    }
     setWalletKey(address);
     addToSearchHistory(address);
     setShowDropdown(false);
@@ -192,7 +236,10 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="hidden md:flex items-center gap-2 relative" ref={dropdownRef}>
+          <div
+            className="hidden md:flex items-center gap-2 relative"
+            ref={dropdownRef}
+          >
             <div className="flex items-center gap-3 bg-card border border-border rounded-full p-1 pl-4">
               <Search className="w-4 h-4 text-muted-foreground" />
               <form onSubmit={handleSearch}>
@@ -235,7 +282,9 @@ export default function Home() {
                   className="absolute top-full left-0 mt-2 w-full min-w-[400px] bg-card border border-border rounded-xl shadow-xl shadow-black/30 overflow-hidden z-50"
                 >
                   <div className="p-2 border-b border-border/50">
-                    <p className="text-xs text-muted-foreground font-medium px-2">Recent Searches</p>
+                    <p className="text-xs text-muted-foreground font-medium px-2">
+                      Recent Searches
+                    </p>
                   </div>
                   <div className="max-h-[280px] overflow-y-auto">
                     {filteredHistory.map((address, index) => (
@@ -267,25 +316,47 @@ export default function Home() {
             </AnimatePresence>
           </div>
 
-            <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2">
             <div className="hidden sm:flex bg-muted rounded-lg p-1 items-center gap-1">
-              {(["24H", "7D", "30D"] as Timeframe[]).map((tf) => (
-                <button
-                  key={tf}
-                  onClick={() => setTimeframe(tf)}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all flex items-center gap-1 ${
-                    timeframe === tf
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {tf}
-                  {tf === "30D" && isLoadingMore && (
-                    <Loader2 className="w-3 h-3 animate-spin shrink-0" />
-                  )}
-                </button>
-              ))}
+              {(["24H", "7D", "30D", "3M", "6M", "1Y"] as Timeframe[]).map(
+                (tf) => {
+                  const isCurrentlyLoading = currentlyLoadingTimeframes.has(tf);
+
+                  // Show spinner on timeframes currently being loaded
+                  const showSpinner = isCurrentlyLoading;
+
+                  // Once initial load has completed, all timeframes are clickable so the user can choose 24H/7D/30D etc. regardless of whether that range has data
+                  const isDisabled = !hasCompletedInitialLoad;
+
+                  return (
+                    <button
+                      key={tf}
+                      onClick={() => setTimeframe(tf)}
+                      disabled={isDisabled}
+                      className={`px-3 py-1 text-xs font-medium rounded-md transition-all flex items-center gap-1 ${
+                        timeframe === tf
+                          ? "bg-background text-foreground shadow-sm"
+                          : isDisabled
+                          ? "text-muted-foreground/40 cursor-not-allowed"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {tf}
+                      {showSpinner && (
+                        <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+                      )}
+                    </button>
+                  );
+                }
+              )}
             </div>
+            {loadingProgress && loadingProgress.phase !== "complete" && (
+              <span className="text-xs text-muted-foreground">
+                {loadingProgress.phase === "cache"
+                  ? "Loading cache..."
+                  : `${loadingProgress.loadedMonths}/${loadingProgress.totalMonths} months`}
+              </span>
+            )}
           </div>
         </div>
       </header>
@@ -320,8 +391,18 @@ export default function Home() {
                   Failed to load strategy data
                 </h2>
                 <p className="text-muted-foreground mb-6 text-sm">
-                  We couldn&apos;t fetch the strategy data for &quot;{walletKey === MOCK_ACCOUNT_KEY ? MOCK_ACCOUNT_DISPLAY : walletKey}&quot;.
-                  The server might be unreachable or the wallet address may be invalid.
+                  {error?.message ? (
+                    error.message
+                  ) : (
+                    <>
+                      We couldn&apos;t fetch the strategy data for &quot;
+                      {walletKey === MOCK_ACCOUNT_KEY
+                        ? MOCK_ACCOUNT_DISPLAY
+                        : walletKey}
+                      &quot;. The server might be unreachable or the wallet
+                      address may be invalid.
+                    </>
+                  )}
                 </p>
                 <div className="flex gap-3 w-full">
                   <Button
@@ -368,8 +449,14 @@ export default function Home() {
             <div>
               <h2 className="text-3xl font-bold mb-1">Portfolio Snapshot</h2>
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <span className={`w-2 h-2 rounded-full ${isLoadingMore ? 'bg-yellow-400' : 'bg-primary'} animate-pulse`} />
-                {isLoadingMore ? 'Loading 30-day data...' : 'Live Connection'}
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    currentlyLoadingTimeframe ? "bg-yellow-400" : "bg-primary"
+                  } animate-pulse`}
+                />
+                {currentlyLoadingTimeframe
+                  ? `Loading ${currentlyLoadingTimeframe} data...`
+                  : "Live Connection"}
                 <span className="mx-2 text-border">|</span>
                 Last updated:{" "}
                 {new Date(data.updatedAt || new Date()).toLocaleTimeString()}
@@ -391,21 +478,49 @@ export default function Home() {
           {/* Metrics Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             {(() => {
-              const prev = data.previousPeriodFundingPnl != null ? Number(data.previousPeriodFundingPnl) : null;
+              const prev =
+                data.previousPeriodFundingPnl != null
+                  ? Number(data.previousPeriodFundingPnl)
+                  : null;
               const curr = Number(data.totalFundingPnl);
-              const hasComparison = prev != null && timeframe !== "30D" && !Number.isNaN(prev) && prev !== 0;
-              const pctChange = hasComparison ? ((curr - prev) / Math.abs(prev)) * 100 : null;
+              // Only show comparison when we have enough data (48h for 24H, 14 days for 7D)
+              const hasComparison =
+                hasComparisonData &&
+                prev != null &&
+                timeframe !== "30D" &&
+                !Number.isNaN(prev) &&
+                prev !== 0;
+              const pctChange = hasComparison
+                ? ((curr - prev) / Math.abs(prev)) * 100
+                : null;
               const vsLabel =
-                timeframe === "24H" ? "vs last 24h" : timeframe === "7D" ? "vs last 7 days" : "vs last period";
+                timeframe === "24H"
+                  ? "vs last 24h"
+                  : timeframe === "7D"
+                  ? "vs last 7 days"
+                  : "vs last period";
+              // Show "Loading comparison..." while we don't have enough data
               const subValue =
-                pctChange != null
-                  ? `${pctChange >= 0 ? "+" : ""}${pctChange.toFixed(1)}% ${vsLabel}`
+                !hasComparisonData &&
+                (timeframe === "24H" || timeframe === "7D")
+                  ? "Loading comparison..."
+                  : pctChange != null
+                  ? `${pctChange >= 0 ? "+" : ""}${pctChange.toFixed(
+                      1
+                    )}% ${vsLabel}`
                   : vsLabel;
-              const trend = pctChange != null ? (pctChange >= 0 ? "up" : "down") : (curr >= 0 ? "up" : "down");
+              const trend =
+                pctChange != null
+                  ? pctChange >= 0
+                    ? "up"
+                    : "down"
+                  : curr >= 0
+                  ? "up"
+                  : "down";
               return (
                 <MetricCard
                   label="Total Funding PnL"
-                  value={`$${curr.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                  value={`$${formatCurrency(curr)}`}
                   subValue={subValue}
                   trend={trend}
                   icon={<TrendingUp className="w-5 h-5" />}
@@ -416,15 +531,27 @@ export default function Home() {
             })()}
             <MetricCard
               label="Current APY"
-              value={data.currentApy && Number(data.currentApy) > 0 ? `${Number(data.currentApy).toFixed(2)}%` : "—"}
+              value={
+                data.currentApy && Number(data.currentApy) > 0
+                  ? `${Number(data.currentApy).toFixed(2)}%`
+                  : "—"
+              }
               subValue="Annualized return"
-              trend={data.currentApy && Number(data.currentApy) > 0 ? "up" : "neutral"}
+              trend={
+                data.currentApy && Number(data.currentApy) > 0
+                  ? "up"
+                  : "neutral"
+              }
               icon={<Activity className="w-5 h-5" />}
               delay={1}
             />
             <MetricCard
               label="Active Notional"
-              value={data.activeNotional && Number(data.activeNotional) > 0 ? `$${Number(data.activeNotional).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : "—"}
+              value={
+                data.activeNotional && Number(data.activeNotional) > 0
+                  ? `$${formatCurrency(Number(data.activeNotional))}`
+                  : "—"
+              }
               subValue="Total position value"
               trend="neutral"
               icon={<Wallet className="w-5 h-5" />}
@@ -462,40 +589,114 @@ export default function Home() {
               <div className="bg-card border border-border rounded-2xl p-6 shadow-lg shadow-black/20">
                 <h3 className="text-lg font-bold mb-4">Risk Parameters</h3>
                 <div className="space-y-4">
+                  {/* Health */}
                   <div className="flex justify-between items-center">
                     <span className="text-sm text-muted-foreground">
-                      Max Drawdown
+                      Account Health
                     </span>
-                    <span className="font-mono font-medium text-destructive">
-                      -2.4%
-                    </span>
-                  </div>
-                  <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
-                    <div className="bg-destructive h-full rounded-full w-[12%]" />
-                  </div>
-
-                  <div className="flex justify-between items-center mt-2">
-                    <span className="text-sm text-muted-foreground">
-                      Exposure Ratio
-                    </span>
-                    <span className="font-mono font-medium text-primary">
-                      0.85
-                    </span>
-                  </div>
-                  <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
-                    <div className="bg-primary h-full rounded-full w-[85%]" />
-                  </div>
-
-                  <div className="flex justify-between items-center mt-2">
-                    <span className="text-sm text-muted-foreground">
-                      Hedge Health
-                    </span>
-                    <Badge
-                      variant="outline"
-                      className="text-emerald-400 border-emerald-400/20 bg-emerald-400/10"
+                    <span
+                      className={`font-mono font-medium ${
+                        userState?.account?.health != null
+                          ? userState.account.health >= 50
+                            ? "text-primary"
+                            : userState.account.health >= 20
+                            ? "text-yellow-400"
+                            : "text-destructive"
+                          : "text-muted-foreground"
+                      }`}
                     >
-                      Excellent
-                    </Badge>
+                      {userState?.account?.health != null
+                        ? `${userState.account.health.toFixed(1)}%`
+                        : "—"}
+                    </span>
+                  </div>
+                  <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        userState?.account?.health != null
+                          ? userState.account.health >= 50
+                            ? "bg-primary"
+                            : userState.account.health >= 20
+                            ? "bg-yellow-400"
+                            : "bg-destructive"
+                          : "bg-muted-foreground/30"
+                      }`}
+                      style={{
+                        width: `${Math.min(
+                          userState?.account?.health ?? 0,
+                          100
+                        )}%`,
+                      }}
+                    />
+                  </div>
+
+                  {/* Leverage */}
+                  <div className="flex justify-between items-center mt-2">
+                    <span className="text-sm text-muted-foreground">
+                      Leverage
+                    </span>
+                    <span
+                      className={`font-mono font-medium ${
+                        userState?.account?.leverage != null
+                          ? userState.account.leverage <= 3
+                            ? "text-primary"
+                            : userState.account.leverage <= 5
+                            ? "text-yellow-400"
+                            : "text-destructive"
+                          : "text-muted-foreground"
+                      }`}
+                    >
+                      {userState?.account?.leverage != null
+                        ? `${userState.account.leverage.toFixed(2)}x`
+                        : "—"}
+                    </span>
+                  </div>
+                  <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        userState?.account?.leverage != null
+                          ? userState.account.leverage <= 3
+                            ? "bg-primary"
+                            : userState.account.leverage <= 5
+                            ? "bg-yellow-400"
+                            : "bg-destructive"
+                          : "bg-muted-foreground/30"
+                      }`}
+                      style={{
+                        width: `${Math.min(
+                          (userState?.account?.leverage ?? 0) * 10,
+                          100
+                        )}%`,
+                      }}
+                    />
+                  </div>
+
+                  {/* Total Collateral */}
+                  <div className="flex justify-between items-center mt-2">
+                    <span className="text-sm text-muted-foreground">
+                      Total Collateral
+                    </span>
+                    <span className="font-mono font-medium text-foreground">
+                      {userState?.account?.totalCollateral != null
+                        ? `$${formatCurrency(
+                            Number(userState.account.totalCollateral)
+                          )}`
+                        : "—"}
+                    </span>
+                  </div>
+
+                  {/* Free Collateral */}
+                  <div className="flex justify-between items-center mt-2">
+                    <span className="text-sm text-muted-foreground">
+                      Free Collateral
+                    </span>
+                    <span className="font-mono font-medium text-foreground">
+                      {userState?.account?.freeCollateral != null
+                        ? `$${formatCurrency(
+                            Number(userState.account.freeCollateral)
+                          )}`
+                        : "—"}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -510,6 +711,10 @@ export default function Home() {
                 <Button
                   variant="outline"
                   className="w-full border-accent/30 text-accent hover:bg-accent/10 hover:text-accent"
+                  onClick={() => {
+                    // TODO: Implement analysis view
+                    console.log("View Analysis clicked");
+                  }}
                 >
                   View Analysis
                 </Button>
@@ -534,8 +739,9 @@ export default function Home() {
           </div>
           <h2 className="text-xl font-bold mb-2">No strategy data found</h2>
           <p className="text-muted-foreground mb-6 max-w-md text-sm">
-            We couldn&apos;t find any funding payment records for &quot;{walletKey === MOCK_ACCOUNT_KEY ? MOCK_ACCOUNT_DISPLAY : walletKey}&quot;.
-            Try a different wallet address or load demo data.
+            We couldn&apos;t find any funding payment records for &quot;
+            {walletKey === MOCK_ACCOUNT_KEY ? MOCK_ACCOUNT_DISPLAY : walletKey}
+            &quot;. Try a different wallet address or load demo data.
           </p>
           <Button
             onClick={() => {

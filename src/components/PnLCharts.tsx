@@ -7,6 +7,12 @@ import { motion, AnimatePresence } from "framer-motion";
 import { type DailyMetric } from "@/types/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tooltip as RadixTooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { Timeframe } from "@/hooks/use-strategies";
 
 interface PnLChartsProps {
@@ -85,6 +91,9 @@ export function PnLCharts({ data, timeframe = "7D" }: PnLChartsProps) {
         localDate,
         dailyPnlNum: Number(d.dailyPnl),
         cumulativePnlNum,
+        notionalValue: d.notionalValue,
+        portfolioApy: d.portfolioApy,
+        perMarketBreakdown: d.perMarketBreakdown,
       };
     }).sort((a, b) => a.localDate.getTime() - b.localDate.getTime());
   }, [data, isHourly]);
@@ -275,32 +284,114 @@ export function PnLCharts({ data, timeframe = "7D" }: PnLChartsProps) {
               className="h-full w-full overflow-auto"
               style={{ scrollbarWidth: 'thin', scrollbarGutter: 'stable' }}
             >
-              <div
-                className="grid gap-2 w-full min-h-full"
-                style={{
-                  gridTemplateColumns: `repeat(auto-fill, minmax(${isHourly ? '4rem' : '5rem'}, 1fr))`,
-                }}
-              >
-                {chartData.map((day, idx) => {
-                  const pnl = day.dailyPnlNum;
-                  const isPositive = pnl >= 0;
-                  return (
-                    <div
-                      key={idx}
-                      className={`min-h-[4rem] rounded-lg flex flex-col items-center justify-center p-2 border transition-all hover:scale-[1.02] ${
-                        isPositive
-                          ? 'bg-primary/15 border-primary/30'
-                          : 'bg-destructive/15 border-destructive/30'
-                      }`}
-                    >
-                      <span className="text-[10px] text-foreground/70 font-medium">{day.formattedDate}</span>
-                      <span className={`text-sm font-bold tabular-nums ${isPositive ? 'text-primary' : 'text-destructive'}`}>
-                        {isPositive ? '+' : ''}{pnl.toFixed(2)}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
+              <TooltipProvider delayDuration={200}>
+                <div
+                  className="grid gap-2 w-full min-h-full"
+                  style={{
+                    gridTemplateColumns: `repeat(auto-fill, minmax(${isHourly ? '4rem' : '7rem'}, 1fr))`,
+                  }}
+                >
+                  {chartData.map((day, idx) => {
+                    const pnl = day.dailyPnlNum;
+                    const isPositive = pnl >= 0;
+                    const notional = day.notionalValue ? parseFloat(day.notionalValue) : null;
+                    const apy = day.portfolioApy ? parseFloat(day.portfolioApy) : null;
+                    const hasBreakdown = day.perMarketBreakdown && day.perMarketBreakdown.length > 0;
+
+                    const cellContent = (
+                      <div
+                        className={`min-h-[5rem] rounded-lg flex flex-col items-center justify-center p-2 border transition-all hover:scale-[1.02] cursor-pointer ${
+                          isPositive
+                            ? 'bg-primary/15 border-primary/30 hover:bg-primary/25'
+                            : 'bg-destructive/15 border-destructive/30 hover:bg-destructive/25'
+                        }`}
+                      >
+                        <span className="text-[10px] text-foreground/70 font-medium">{day.formattedDate}</span>
+                        <span className={`text-sm font-bold tabular-nums ${isPositive ? 'text-primary' : 'text-destructive'}`}>
+                          {isPositive ? '+' : ''}{pnl.toFixed(2)}
+                        </span>
+                        {!isHourly && notional !== null && (
+                          <span className="text-[9px] text-foreground/60 tabular-nums">
+                            ${(notional / 1000).toFixed(1)}k
+                          </span>
+                        )}
+                        {!isHourly && apy !== null && (
+                          <span className={`text-[9px] tabular-nums ${apy >= 0 ? 'text-primary/80' : 'text-destructive/80'}`}>
+                            {apy >= 0 ? '+' : ''}{apy.toFixed(1)}% APY
+                          </span>
+                        )}
+                      </div>
+                    );
+
+                    if (hasBreakdown) {
+                      return (
+                        <RadixTooltip key={idx}>
+                          <TooltipTrigger asChild>
+                            {cellContent}
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-xs p-0">
+                            <div className="p-3 space-y-2">
+                              <div className="flex justify-between items-center border-b border-border pb-2">
+                                <span className="font-semibold">{day.formattedDate}</span>
+                                <span className={`font-bold ${isPositive ? 'text-primary' : 'text-destructive'}`}>
+                                  ${pnl.toFixed(2)}
+                                </span>
+                              </div>
+                              {notional !== null && (
+                                <div className="flex justify-between text-xs">
+                                  <span className="text-muted-foreground">Total Notional</span>
+                                  <span className="font-mono">${notional.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                                </div>
+                              )}
+                              {apy !== null && (
+                                <div className="flex justify-between text-xs">
+                                  <span className="text-muted-foreground">Portfolio APY</span>
+                                  <span className={`font-mono ${apy >= 0 ? 'text-primary' : 'text-destructive'}`}>
+                                    {apy >= 0 ? '+' : ''}{apy.toFixed(2)}%
+                                  </span>
+                                </div>
+                              )}
+                              {day.perMarketBreakdown && day.perMarketBreakdown.length > 0 && (
+                                <div className="pt-2 border-t border-border">
+                                  <div className="text-xs font-medium mb-1">Per Market</div>
+                                  <table className="w-full text-[10px]">
+                                    <thead>
+                                      <tr className="text-muted-foreground">
+                                        <th className="text-left pr-2">Market</th>
+                                        <th className="text-right pr-2">Funding</th>
+                                        <th className="text-right pr-2">Notional</th>
+                                        <th className="text-right">APY</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {day.perMarketBreakdown.map((m, i) => (
+                                        <tr key={i} className="tabular-nums">
+                                          <td className="pr-2 font-medium">{m.marketName.replace('-PERP', '')}</td>
+                                          <td className={`text-right pr-2 ${m.dailyFunding >= 0 ? 'text-primary' : 'text-destructive'}`}>
+                                            ${m.dailyFunding.toFixed(2)}
+                                          </td>
+                                          <td className="text-right pr-2">
+                                            ${(m.notionalValue / 1000).toFixed(1)}k
+                                          </td>
+                                          <td className={`text-right ${m.apy >= 0 ? 'text-primary' : 'text-destructive'}`}>
+                                            {m.apy.toFixed(1)}%
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                            </div>
+                          </TooltipContent>
+                        </RadixTooltip>
+                      );
+                    }
+
+                    return <div key={idx}>{cellContent}</div>;
+                  })}
+                </div>
+              </TooltipProvider>
             </motion.div>
           )}
         </AnimatePresence>

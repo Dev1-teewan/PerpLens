@@ -1,8 +1,8 @@
-import type { DriftFundingPaymentRecord } from "./drift-types";
-import type { StrategyResponse, DailyMetric, Position } from "../types/schema";
+import type { DriftFundingPaymentRecord, DailyCandleRecord } from "./drift-types";
+import type { StrategyResponse, DailyMetric, Position, DailyMarketBreakdown } from "../types/schema";
 import { getMarketName } from "./drift-types";
 
-export type Timeframe = "24H" | "7D" | "30D";
+export type Timeframe = "24H" | "7D" | "30D" | "3M" | "6M" | "1Y";
 
 interface MarketAggregation {
   marketIndex: number;
@@ -13,16 +13,18 @@ interface MarketAggregation {
   dailyFunding: Map<string, number>;  // Per-day funding for sparkline
 }
 
-interface DailyAggregation {
-  date: string;
-  totalFunding: number;
-  recordCount: number;
-}
-
 interface HourlyAggregation {
   hourKey: string;
   totalFunding: number;
   recordCount: number;
+}
+
+interface DailyRecordAggregation {
+  date: string;
+  totalFunding: number;
+  recordCount: number;
+  perMarketFunding: Map<number, number>; // marketIndex -> funding
+  perMarketBaseAsset: Map<number, number>; // marketIndex -> baseAssetAmount (absolute)
 }
 
 /**
@@ -49,12 +51,31 @@ function formatLocalHourKey(timestamp: number): string {
 }
 
 /**
+ * Get oracle price for a specific date from candle data
+ */
+function getOraclePriceForDate(
+  candles: DailyCandleRecord[],
+  dateStr: string
+): number | null {
+  // Convert dateStr (YYYY-MM-DD) to start of day timestamp
+  const [year, month, day] = dateStr.split("-").map(Number);
+  const dateStart = new Date(year, month - 1, day).getTime() / 1000;
+  const dateEnd = dateStart + 24 * 60 * 60;
+
+  // Find candle that falls within this day
+  const candle = candles.find((c) => c.ts >= dateStart && c.ts < dateEnd);
+  return candle ? candle.oracleClose : null;
+}
+
+/**
  * Transform Drift API funding payment records into our StrategyResponse format
+ * Optional candleData parameter enables notional/APY enrichment for daily metrics
  */
 export function transformDriftDataToStrategy(
   userAddress: string,
   records: DriftFundingPaymentRecord[],
-  timeframe: Timeframe = "7D"
+  timeframe: Timeframe = "7D",
+  candleData?: Map<string, DailyCandleRecord[]>
 ): StrategyResponse {
   if (records.length === 0) {
     // Return empty strategy if no records
@@ -178,22 +199,39 @@ export function transformDriftDataToStrategy(
       };
     });
   } else {
-    const dailyMap = new Map<string, DailyAggregation>();
+    const dailyMap = new Map<string, DailyRecordAggregation>();
     for (const record of records) {
       const date = formatLocalDate(record.ts);
       if (!dailyMap.has(date)) {
-        dailyMap.set(date, { date, totalFunding: 0, recordCount: 0 });
+        dailyMap.set(date, {
+          date,
+          totalFunding: 0,
+          recordCount: 0,
+          perMarketFunding: new Map(),
+          perMarketBaseAsset: new Map(),
+        });
       }
       const dailyAgg = dailyMap.get(date)!;
-      dailyAgg.totalFunding += parseFloat(record.fundingPayment);
+      const funding = parseFloat(record.fundingPayment);
+      const baseAsset = Math.abs(parseFloat(record.baseAssetAmount));
+
+      dailyAgg.totalFunding += funding;
       dailyAgg.recordCount++;
+
+      // Aggregate per-market data
+      const currentFunding = dailyAgg.perMarketFunding.get(record.marketIndex) || 0;
+      dailyAgg.perMarketFunding.set(record.marketIndex, currentFunding + funding);
+
+      // Keep the latest base asset amount for each market on this day
+      dailyAgg.perMarketBaseAsset.set(record.marketIndex, baseAsset);
     }
     const sortedDays = Array.from(dailyMap.entries())
       .sort(([dateA], [dateB]) => dateA.localeCompare(dateB));
     let cumulativePnl = 0;
     dailyMetrics = sortedDays.map(([date, dailyAgg], index) => {
       cumulativePnl += dailyAgg.totalFunding;
-      return {
+
+      const metric: DailyMetric = {
         id: index + 1,
         strategyId: 1,
         date: new Date(date),
@@ -201,6 +239,44 @@ export function transformDriftDataToStrategy(
         dailyFunding: dailyAgg.totalFunding.toFixed(2),
         cumulativePnl: cumulativePnl.toFixed(2),
       };
+
+      // Enrich with notional/APY if candle data is provided
+      if (candleData && candleData.size > 0) {
+        let totalNotional = 0;
+        const breakdowns: DailyMarketBreakdown[] = [];
+
+        for (const [marketIndex, marketFunding] of dailyAgg.perMarketFunding) {
+          const marketName = getMarketName(marketIndex);
+          const baseAsset = dailyAgg.perMarketBaseAsset.get(marketIndex) || 0;
+          const candles = candleData.get(marketName);
+          const price = candles ? getOraclePriceForDate(candles, date) : null;
+
+          if (price !== null && baseAsset > 0) {
+            const notional = baseAsset * price;
+            totalNotional += notional;
+            const dailyRoi = notional > 0 ? (marketFunding / notional) * 100 : 0;
+            const apy = dailyRoi * 365;
+
+            breakdowns.push({
+              marketIndex,
+              marketName,
+              dailyFunding: marketFunding,
+              notionalValue: notional,
+              apy,
+            });
+          }
+        }
+
+        if (totalNotional > 0) {
+          metric.notionalValue = totalNotional.toFixed(2);
+          const dailyRoi = (dailyAgg.totalFunding / totalNotional) * 100;
+          const portfolioApy = dailyRoi * 365;
+          metric.portfolioApy = portfolioApy.toFixed(2);
+          metric.perMarketBreakdown = breakdowns;
+        }
+      }
+
+      return metric;
     });
   }
 

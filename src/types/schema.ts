@@ -12,6 +12,14 @@ export interface Strategy {
   updatedAt?: string | Date;
 }
 
+export interface DailyMarketBreakdown {
+  marketIndex: number;
+  marketName: string;
+  dailyFunding: number;
+  notionalValue: number;
+  apy: number;
+}
+
 export interface DailyMetric {
   id: number;
   strategyId: number;
@@ -19,6 +27,9 @@ export interface DailyMetric {
   dailyPnl: string;
   dailyFunding: string;
   cumulativePnl: string;
+  notionalValue?: string;
+  portfolioApy?: string;
+  perMarketBreakdown?: DailyMarketBreakdown[];
 }
 
 export interface Position {

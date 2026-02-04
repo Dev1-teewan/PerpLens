@@ -26,6 +26,22 @@ export interface DriftFundingPaymentsResponse {
 }
 
 /**
+ * Daily candle record from Drift API
+ */
+export interface DailyCandleRecord {
+  ts: number;
+  oracleClose: number;
+  oracleOpen: number;
+  oracleHigh: number;
+  oracleLow: number;
+}
+
+export interface DailyCandlesResponse {
+  success: boolean;
+  records: DailyCandleRecord[];
+}
+
+/**
  * Market index to name mapping for Drift Protocol
  * You can expand this as needed
  */ export const DRIFT_MARKET_NAMES: Record<number, string> = {
@@ -116,4 +132,63 @@ export interface DriftFundingPaymentsResponse {
 };
 export function getMarketName(marketIndex: number): string {
   return DRIFT_MARKET_NAMES[marketIndex] || `MARKET-${marketIndex}`;
+}
+
+/**
+ * User account state types from Drift API
+ */
+export interface DriftUserAccount {
+  authority: string;
+  subAccountId: number;
+  status: number;
+  totalCollateral: string;
+  freeCollateral: string;
+  health: number;
+  leverage: number;
+  marginRatio: number;
+  lastActiveSlot: number;
+}
+
+export interface DriftSpotBalance {
+  marketIndex: number;
+  symbol: string;
+  balance: string;
+  tokenAmount: string;
+  oraclePrice: string;
+  value: string;
+}
+
+export interface DriftPerpPosition {
+  marketIndex: number;
+  symbol: string;
+  baseAssetAmount: string;
+  quoteAssetAmount: string;
+  entryPrice: string;
+  oraclePrice: string;
+  unrealizedPnl: string;
+  unsettledPnl: string;
+  lpShares: string;
+}
+
+export interface DriftOrder {
+  orderId: number;
+  status: string;
+  orderType: string;
+  marketIndex: number;
+  marketType: string;
+  baseAssetAmount: string;
+  price: string;
+  direction: string;
+  reduceOnly: boolean;
+  postOnly: boolean;
+  slot: number;
+}
+
+export interface DriftUserResponse {
+  success: boolean;
+  user: string;
+  account: DriftUserAccount;
+  perpPositions: DriftPerpPosition[];
+  spotBalances: DriftSpotBalance[];
+  orders: DriftOrder[];
 }
