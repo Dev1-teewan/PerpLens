@@ -138,7 +138,7 @@ export async function fetchMarketCandle(
   symbol: string
 ): Promise<number | null> {
   try {
-    const marketSymbol = symbol.replace("-PERP", "");
+    const marketSymbol = symbol.endsWith("-PERP") ? symbol : `${symbol}-PERP`;
     const url = `${DRIFT_API_BASE}/market/${marketSymbol}/candles/1?limit=1`;
 
     const response = await fetch(url);
@@ -203,7 +203,7 @@ export async function fetchDailyCandles(
   limit: number = 365
 ): Promise<DailyCandleRecord[]> {
   try {
-    const symbol = marketSymbol.replace("-PERP", "");
+    const symbol = marketSymbol.endsWith("-PERP") ? marketSymbol : `${marketSymbol}-PERP`;
     const url = `${DRIFT_API_BASE}/market/${symbol}/candles/D?limit=${limit}`;
 
     const response = await fetch(url);

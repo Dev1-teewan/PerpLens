@@ -13,7 +13,7 @@ import {
   fetchExtendedTimeframe,
   fetchProbe12Months,
 } from "@/services/funding-fetcher";
-import { getCacheState, selectDefaultTimeframe } from "@/services/cache-manager";
+import { getCacheState, getCachedRecords, selectDefaultTimeframe } from "@/services/cache-manager";
 import { useLoadingState } from "./use-loading-state";
 import { usePriceEnrichment } from "./use-price-enrichment";
 import {
@@ -180,10 +180,20 @@ export function useStrategy(
 
     // For extended timeframes that are already fetched, load from our cache
     if (isExtendedTimeframe(timeframe) && fetchedTimeframes.has(timeframe)) {
-      const cachedRecords = extendedRecordsRef.current.get(timeframe);
+      let cachedRecords = extendedRecordsRef.current.get(timeframe);
+      if (!cachedRecords || cachedRecords.length === 0) {
+        const days = getTimeframeDays(timeframe);
+        const fromStorage = getCachedRecords(walletSubkey, days);
+        if (fromStorage.length > 0) {
+          cachedRecords = fromStorage;
+          extendedRecordsRef.current.set(timeframe, fromStorage);
+        }
+      }
       if (cachedRecords && cachedRecords.length > 0) {
         console.log(`[Main] Loading cached ${timeframe} records: ${cachedRecords.length}`);
         setAllRecords(cachedRecords);
+      } else {
+        setAllRecords([]);
       }
       return;
     }
@@ -223,6 +233,7 @@ export function useStrategy(
 
       if (isExtendedTimeframe(timeframe)) {
         // Fetch extended timeframe directly
+        setFetching(timeframe);
         await fetchExtendedTimeframe(walletSubkey, timeframe, {
           onRecords: (records) => {
             if (currentWalletRef.current !== walletAtFetch) return;
@@ -233,7 +244,9 @@ export function useStrategy(
             if (currentWalletRef.current !== walletAtFetch) return;
             setAllRecords(records);
             setFetchedTimeframes((prev) => new Set([...prev, timeframe]));
+            extendedRecordsRef.current.set(timeframe, records);
             onExtendedLoaded(timeframe);
+            setFetching(null);
             setLoadingProgress(null);
           },
           onError: (error) => {
@@ -302,7 +315,7 @@ export function useStrategy(
     };
 
     fetchData(useCache);
-  }, [walletSubkey, timeframe, fetchedTimeframes, state.phase, startFresh, startFromCache, on7DLoaded, on14DMilestone, on30DLoaded, onExtendedLoaded, onProbeComplete, setError]);
+  }, [walletSubkey, timeframe, fetchedTimeframes, state.phase, startFresh, startFromCache, on7DLoaded, on14DMilestone, on30DLoaded, onExtendedLoaded, onProbeComplete, setFetching, setError]);
 
   // Auto-fetch extended timeframes sequentially after 30D
   useEffect(() => {
@@ -319,6 +332,9 @@ export function useStrategy(
     // Skip if already fetched or currently fetching
     if (fetchedTimeframes.has(nextTimeframe)) return;
     if (extendedFetchingRef.current) return;
+
+    // Let main effect handle it when user selected an extended timeframe that is in queue and not yet fetched
+    if (isExtendedTimeframe(timeframe) && state.extendedQueue.includes(timeframe) && !fetchedTimeframes.has(timeframe)) return;
 
     console.log(`[Auto-fetch] Starting fetch for ${nextTimeframe}, phase: ${state.phase}, queue: ${state.extendedQueue.join(",")}`);
 
