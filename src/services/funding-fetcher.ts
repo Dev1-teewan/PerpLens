@@ -6,23 +6,30 @@
 import type { DriftFundingPaymentRecord } from "./drift-types";
 import type { Timeframe, LoadingProgress } from "@/types/loading-types";
 import { getTimeframeDays } from "@/types/loading-types";
-import {
-  fetchFundingPayments,
-  fetchFundingPaymentsByMonth,
-} from "./drift-api";
+import { fetchFundingPayments, fetchFundingPaymentsByMonth } from "./drift-api";
 import {
   getCachedRecords,
   storeRecords,
   getMissingDateRange,
+  touchCacheTimestamp,
 } from "./cache-manager";
-import { getMonthsInRange, isCurrentMonth, shouldRefreshMonth, getCachedFundingMonth, setCachedFundingMonth } from "./cache-utils";
+import {
+  getMonthsInRange,
+  isCurrentMonth,
+  shouldRefreshMonth,
+  getCachedFundingMonth,
+  setCachedFundingMonth,
+} from "./cache-utils";
 
 /**
  * Callbacks for fetch progress and milestones
  */
 export interface FetchCallbacks {
   onMilestone: (milestone: "7d" | "14d" | "30d") => void;
-  onRecords: (records: DriftFundingPaymentRecord[], totalDaysLoaded: number) => void;
+  onRecords: (
+    records: DriftFundingPaymentRecord[],
+    totalDaysLoaded: number
+  ) => void;
   onProgress?: (progress: LoadingProgress) => void;
   onComplete: (records: DriftFundingPaymentRecord[]) => void;
   onError: (error: Error) => void;
@@ -96,7 +103,71 @@ export async function fetchFundingIncremental(
       onRecords(cachedRecords, cachedDays);
     }
 
-    // Fetch missing data
+    // OPTIMIZATION: If we only need recent data, do a single fetch and merge
+    if (needsFetch === "recent" && cachedRecords.length > 0) {
+      const latestCachedTs = Math.max(...cachedRecords.map((r) => r.ts));
+      const latestCachedDate = new Date(latestCachedTs * 1000);
+      const hoursSinceLastFetch = (Date.now() / 1000 - latestCachedTs) / 3600;
+      console.log(`[Fetcher] 🔄 Fetching recent records...`);
+      console.log(
+        `[Fetcher]   Latest cached: ${latestCachedDate.toLocaleString()}`
+      );
+      console.log(
+        `[Fetcher]   Hours since last record: ${hoursSinceLastFetch.toFixed(
+          1
+        )}h`
+      );
+      console.log(`[Fetcher]   Cached records count: ${cachedRecords.length}`);
+
+      const response = await fetchFundingPayments(wallet);
+
+      if (response.success && response.records) {
+        console.log(
+          `[Fetcher]   API returned ${response.records.length} records`
+        );
+
+        // Filter to only new records (after our latest cached timestamp)
+        const newRecords = response.records.filter(
+          (r) => r.ts > latestCachedTs
+        );
+
+        if (newRecords.length > 0) {
+          const newestTs = Math.max(...newRecords.map((r) => r.ts));
+          console.log(`[Fetcher] ✅ Found ${newRecords.length} NEW records`);
+          console.log(
+            `[Fetcher]   Newest record: ${new Date(
+              newestTs * 1000
+            ).toLocaleString()}`
+          );
+          storeRecords(wallet, newRecords);
+
+          // Merge with cached
+          const merged = deduplicateRecords([...cachedRecords, ...newRecords]);
+          merged.sort((a, b) => b.ts - a.ts);
+
+          const daysCovered = getDaysCovered(merged);
+          console.log(
+            `[Fetcher]   Total records after merge: ${merged.length}`
+          );
+          onMilestone("30d");
+          onRecords(merged, daysCovered);
+          onComplete(merged);
+          return merged;
+        } else {
+          console.log(
+            `[Fetcher] ℹ️ No new records found (all ${response.records.length} records are older)`
+          );
+          // No new records, update timestamp so we don't keep checking
+          touchCacheTimestamp(wallet);
+          onMilestone("30d");
+          onRecords(cachedRecords, cachedDays);
+          onComplete(cachedRecords);
+          return cachedRecords;
+        }
+      }
+    }
+
+    // Full fetch for initial load or historical data
     const allRecords: DriftFundingPaymentRecord[] = [...cachedRecords];
     const fetchedRecords: DriftFundingPaymentRecord[] = [];
 
@@ -161,7 +232,9 @@ export async function fetchFundingIncremental(
     // Trigger 30d milestone when initial fetch is complete and we have at least one record
     // When finalRecords is empty the caller handles transition in onComplete
     if (!triggered30d && finalRecords.length > 0) {
-      console.log(`[Fetcher] Triggering 30d milestone, finalDays: ${finalDays}`);
+      console.log(
+        `[Fetcher] Triggering 30d milestone, finalDays: ${finalDays}`
+      );
       onMilestone("30d");
     }
 
@@ -249,7 +322,11 @@ export async function fetchExtendedTimeframe(
         const batchResults = await Promise.all(
           batch.map(async ({ year, month }) => {
             try {
-              const response = await fetchFundingPaymentsByMonth(wallet, year, month);
+              const response = await fetchFundingPaymentsByMonth(
+                wallet,
+                year,
+                month
+              );
               if (response.success && response.records) {
                 setCachedFundingMonth(wallet, year, month, response.records);
                 return response.records;
@@ -331,8 +408,16 @@ export async function fetchProbe12Months(
       const batchResults = await Promise.all(
         batch.map(async ({ year, month }) => {
           try {
-            const response = await fetchFundingPaymentsByMonth(wallet, year, month);
-            if (response.success && response.records && response.records.length > 0) {
+            const response = await fetchFundingPaymentsByMonth(
+              wallet,
+              year,
+              month
+            );
+            if (
+              response.success &&
+              response.records &&
+              response.records.length > 0
+            ) {
               setCachedFundingMonth(wallet, year, month, response.records);
               return response.records;
             }

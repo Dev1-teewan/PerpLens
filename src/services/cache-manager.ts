@@ -149,6 +149,20 @@ export function storeRecords(
 }
 
 /**
+ * Update the fetchedAt timestamp without adding new records
+ * Used when we check for recent records but find none
+ */
+export function touchCacheTimestamp(wallet: string): void {
+  const existingIndex = getCachedDayIndex(wallet);
+  if (existingIndex) {
+    setCachedDayIndex(wallet, {
+      ...existingIndex,
+      fetchedAt: Date.now(),
+    });
+  }
+}
+
+/**
  * Calculate what date range needs to be fetched based on cache state
  */
 export interface FetchRange {
@@ -167,6 +181,7 @@ export function getMissingDateRange(wallet: string, requestedDays: number): Fetc
   const index = getCachedDayIndex(wallet);
 
   if (!index) {
+    console.log("[CacheManager] 📭 No cache index found, need full fetch");
     return {
       startDate: requestedStartDate,
       endDate: now,
@@ -174,11 +189,24 @@ export function getMissingDateRange(wallet: string, requestedDays: number): Fetc
     };
   }
 
-  const isStale = Date.now() - index.fetchedAt > 5 * 60 * 1000;
+  const staleDurationMs = Date.now() - index.fetchedAt;
+  const staleDurationMin = staleDurationMs / 1000 / 60;
+  const isStale = staleDurationMs > 5 * 60 * 1000;
   const hasToday = index.lastFetchedDate === today;
   const hasHistorical = index.oldestCachedDate <= requestedStart;
 
+  console.log("[CacheManager] 📋 Cache index state:", {
+    lastFetchedDate: index.lastFetchedDate,
+    fetchedAt: new Date(index.fetchedAt).toLocaleString(),
+    minutesSinceFetch: staleDurationMin.toFixed(1),
+    isStale,
+    hasToday,
+    hasHistorical,
+    today,
+  });
+
   if (hasToday && !isStale && hasHistorical) {
+    console.log("[CacheManager] ✅ Cache is fresh and complete");
     return {
       startDate: requestedStartDate,
       endDate: now,
@@ -188,12 +216,14 @@ export function getMissingDateRange(wallet: string, requestedDays: number): Fetc
 
   if (!hasToday || isStale) {
     if (!hasHistorical) {
+      console.log("[CacheManager] 🔄 Cache stale and missing historical, need full fetch");
       return {
         startDate: requestedStartDate,
         endDate: now,
         needsFetch: "both",
       };
     }
+    console.log("[CacheManager] 🔄 Cache stale, need recent fetch only");
     const lastCachedDate = new Date(index.lastFetchedDate);
     return {
       startDate: lastCachedDate,
@@ -202,6 +232,7 @@ export function getMissingDateRange(wallet: string, requestedDays: number): Fetc
     };
   }
 
+  console.log("[CacheManager] 🔄 Need historical fetch");
   const oldestCached = new Date(index.oldestCachedDate);
   return {
     startDate: requestedStartDate,

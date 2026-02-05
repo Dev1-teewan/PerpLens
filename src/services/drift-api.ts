@@ -22,7 +22,11 @@ import {
   daysBetween,
   isCurrentMonth,
   shouldRefreshMonth,
+  migrateOldCandleCaches,
 } from "./cache-utils";
+
+// Run migration on module load
+migrateOldCandleCaches();
 
 const DRIFT_API_BASE = "https://data.api.drift.trade";
 

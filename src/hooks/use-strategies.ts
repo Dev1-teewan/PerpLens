@@ -22,6 +22,7 @@ import {
   selectDefaultTimeframe,
   getCachedExtendedTimeframes,
   isExtendedTimeframeCached,
+  getMissingDateRange,
 } from "@/services/cache-manager";
 import { useLoadingState } from "./use-loading-state";
 import { usePriceEnrichment } from "./use-price-enrichment";
@@ -290,15 +291,27 @@ export function useStrategy(
         setFetchedTimeframes((prev) => new Set([...prev, ...cachedExtended]));
       }
 
-      // If all extended timeframes are cached, skip the fetch entirely
-      // Just load from cache and mark initial fetch as done
+      // If all extended timeframes are cached, check if we need to fetch recent records
       if (filteredQueue.length === 0) {
-        console.log("[Main] All timeframes cached, skipping fetch");
         const days = getTimeframeDays(timeframe);
         const cachedRecords = getCachedRecords(walletSubkey, days);
         setAllRecords(cachedRecords);
         initialFetchDoneRef.current = true;
-        return; // Skip fetchData call
+
+        // Check if cache is stale and we need to fetch recent records
+        const fetchRange = getMissingDateRange(walletSubkey, 30);
+        console.log("[Main] 📊 Cache state check:", {
+          needsFetch: fetchRange.needsFetch,
+          cachedRecordsCount: cachedRecords.length,
+          timeframe,
+        });
+
+        if (fetchRange.needsFetch === "none") {
+          console.log("[Main] ✅ All timeframes cached and fresh, skipping fetch");
+          return; // Skip fetchData call
+        }
+        console.log("[Main] 🔄 All timeframes cached but stale, fetching recent records...");
+        // Continue to fetchData to get recent records
       }
     }
 

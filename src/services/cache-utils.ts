@@ -351,6 +351,7 @@ const HOURLY_CANDLE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 /**
  * Get cached hourly candles for a market
+ * Returns full DailyCandleRecord format with dummy OHLC values
  */
 export function getCachedHourlyCandles(
   market: string
@@ -359,13 +360,21 @@ export function getCachedHourlyCandles(
     const key = CACHE_KEYS.hourlyCandles(market);
     const stored = localStorage.getItem(key);
     if (!stored) return null;
-    const cached = JSON.parse(stored) as CachedHourlyCandles;
+    const cached = JSON.parse(stored);
     // Check if cache is expired
     if (Date.now() - cached.fetchedAt > HOURLY_CANDLE_TTL_MS) {
       localStorage.removeItem(key);
       return null;
     }
-    return cached;
+    // Expand minimal records to full format
+    const fullRecords: DailyCandleRecord[] = cached.records.map((r: MinimalCandleRecord) => ({
+      ts: r.ts,
+      oracleClose: r.oracleClose,
+      oracleOpen: r.oracleClose,
+      oracleHigh: r.oracleClose,
+      oracleLow: r.oracleClose,
+    }));
+    return { records: fullRecords, fetchedAt: cached.fetchedAt };
   } catch (e) {
     console.warn("Failed to read hourly candle cache:", e);
     return null;
@@ -373,7 +382,7 @@ export function getCachedHourlyCandles(
 }
 
 /**
- * Save hourly candles to cache
+ * Save hourly candles to cache (minimal format to save space)
  */
 export function setCachedHourlyCandles(
   market: string,
@@ -381,36 +390,62 @@ export function setCachedHourlyCandles(
 ): void {
   try {
     const key = CACHE_KEYS.hourlyCandles(market);
-    const data: CachedHourlyCandles = {
-      records,
+    // Store only essential fields
+    const minimalRecords = records.map((r) => ({
+      ts: r.ts,
+      oracleClose: r.oracleClose,
+    }));
+    const data = {
+      records: minimalRecords,
       fetchedAt: Date.now(),
     };
     localStorage.setItem(key, JSON.stringify(data));
   } catch (e) {
-    console.warn("Failed to save hourly candle cache:", e);
+    // Quota exceeded - just skip caching, it's short-lived anyway
+    console.warn("Skipping hourly candle cache due to storage limits");
   }
 }
 
 /**
- * Simple daily candle cache - stores 366 days per market
+ * Minimal candle record for cache (only essential fields)
+ */
+export interface MinimalCandleRecord {
+  ts: number;
+  oracleClose: number;
+}
+
+/**
+ * Simple daily candle cache - stores up to 180 days per market
  * lastDate is YYYY-MM-DD of the most recent candle
  */
 export interface CachedDailyCandles {
-  records: DailyCandleRecord[];
+  records: MinimalCandleRecord[];
   lastDate: string; // YYYY-MM-DD of the most recent candle
 }
 
 /**
  * Get cached daily candles for a market
+ * Returns full DailyCandleRecord with dummy values for unused OHLC fields
  */
 export function getCachedDailyCandles(
   market: string
-): CachedDailyCandles | null {
+): { records: DailyCandleRecord[]; lastDate: string } | null {
   try {
     const key = CACHE_KEYS.dailyCandles(market);
     const stored = localStorage.getItem(key);
     if (!stored) return null;
-    return JSON.parse(stored) as CachedDailyCandles;
+    const cached = JSON.parse(stored) as CachedDailyCandles;
+
+    // Expand minimal records back to full format
+    const fullRecords: DailyCandleRecord[] = cached.records.map((r) => ({
+      ts: r.ts,
+      oracleClose: r.oracleClose,
+      oracleOpen: r.oracleClose,
+      oracleHigh: r.oracleClose,
+      oracleLow: r.oracleClose,
+    }));
+
+    return { records: fullRecords, lastDate: cached.lastDate };
   } catch (e) {
     console.warn("Failed to read daily candle cache:", e);
     return null;
@@ -418,23 +453,137 @@ export function getCachedDailyCandles(
 }
 
 /**
- * Save daily candles to cache
+ * Max days to cache for daily candles (reduced from 366 to save space)
+ */
+const MAX_CACHED_CANDLE_DAYS = 180;
+
+/**
+ * Save daily candles to cache with quota management
+ * Stores only essential fields (ts, oracleClose) to minimize size
+ * If quota is exceeded, clears old candle caches and retries
  */
 export function setCachedDailyCandles(
   market: string,
   records: DailyCandleRecord[],
   lastDate: string
 ): void {
+  const key = CACHE_KEYS.dailyCandles(market);
+
+  // Convert to minimal format and limit to MAX_CACHED_CANDLE_DAYS
+  const cutoffTs = Math.floor(Date.now() / 1000) - MAX_CACHED_CANDLE_DAYS * 24 * 60 * 60;
+  const minimalRecords: MinimalCandleRecord[] = records
+    .filter((r) => r.ts >= cutoffTs)
+    .map((r) => ({
+      ts: r.ts,
+      oracleClose: r.oracleClose,
+    }));
+
+  const data: CachedDailyCandles = {
+    records: minimalRecords,
+    lastDate,
+  };
+
   try {
-    const key = CACHE_KEYS.dailyCandles(market);
-    const data: CachedDailyCandles = {
-      records,
-      lastDate,
-    };
     localStorage.setItem(key, JSON.stringify(data));
   } catch (e) {
-    console.warn("Failed to save daily candle cache:", e);
+    if (e instanceof DOMException && e.name === "QuotaExceededError") {
+      // Clear old candle caches to make room
+      console.warn("LocalStorage quota exceeded, clearing old candle caches...");
+      clearOldCandleCaches(market);
+
+      try {
+        localStorage.setItem(key, JSON.stringify(data));
+      } catch (retryError) {
+        // If still failing, skip caching entirely
+        console.warn("Skipping daily candle cache due to storage limits");
+      }
+    } else {
+      console.warn("Failed to save daily candle cache:", e);
+    }
   }
+}
+
+/**
+ * Clear old candle caches to free up space, preserving the specified market
+ */
+function clearOldCandleCaches(preserveMarket?: string): void {
+  const candleKeys: string[] = [];
+
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith("drift:daily-candles:")) {
+      // Extract market from key and skip if it's the one we want to preserve
+      const marketInKey = key.replace("drift:daily-candles:", "");
+      if (marketInKey !== preserveMarket) {
+        candleKeys.push(key);
+      }
+    }
+  }
+
+  // Remove all except the preserved market
+  for (const key of candleKeys) {
+    try {
+      localStorage.removeItem(key);
+    } catch (e) {
+      // Ignore removal errors
+    }
+  }
+
+  // Also clear hourly candles which are short-lived anyway
+  const hourlyKeys: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith("drift:hourly-candles:")) {
+      hourlyKeys.push(key);
+    }
+  }
+  for (const key of hourlyKeys) {
+    try {
+      localStorage.removeItem(key);
+    } catch (e) {
+      // Ignore removal errors
+    }
+  }
+}
+
+/**
+ * Clear all daily candle caches (for migration or cleanup)
+ */
+export function clearAllDailyCandleCaches(): void {
+  const keysToRemove: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith("drift:daily-candles:")) {
+      keysToRemove.push(key);
+    }
+  }
+  for (const key of keysToRemove) {
+    try {
+      localStorage.removeItem(key);
+    } catch (e) {
+      // Ignore
+    }
+  }
+  if (keysToRemove.length > 0) {
+    console.log(`Cleared ${keysToRemove.length} daily candle caches`);
+  }
+}
+
+/**
+ * Migrate old format candle caches to new minimal format
+ * Called once on app load
+ */
+export function migrateOldCandleCaches(): void {
+  const migrationKey = "drift:candle-cache-v2";
+  if (localStorage.getItem(migrationKey)) {
+    return; // Already migrated
+  }
+
+  // Clear all old candle caches - they'll be re-fetched in new format
+  clearAllDailyCandleCaches();
+
+  // Mark as migrated
+  localStorage.setItem(migrationKey, "1");
 }
 
 /**
