@@ -44,6 +44,42 @@ function loadSearchHistory(): string[] {
   return [];
 }
 
+function isRateLimitOrBlockedError(error: Error | null): boolean {
+  if (!error?.message) return false;
+  const msg = error.message.toLowerCase();
+  return (
+    msg === "failed to fetch" ||
+    msg.includes("403") ||
+    msg.includes("cors") ||
+    msg.includes("rate limit") ||
+    msg.includes("blocked by cors")
+  );
+}
+
+const RATE_LIMIT_BODY =
+  "The Drift API rate limit was exceeded or the request was blocked (e.g. CORS or 403). Please wait a few minutes and try again.";
+
+function getErrorDialogContent(error: Error | null, walletKey: string): { title: string; body: React.ReactNode } {
+  if (isRateLimitOrBlockedError(error)) {
+    return {
+      title: "Rate limit exceeded",
+      body: RATE_LIMIT_BODY,
+    };
+  }
+  return {
+    title: "Failed to load strategy data",
+    body: error?.message ? (
+      error.message
+    ) : (
+      <>
+        We couldn&apos;t fetch the strategy data for &quot;
+        {walletKey === MOCK_ACCOUNT_KEY ? MOCK_ACCOUNT_DISPLAY : walletKey}
+        &quot;. The server might be unreachable or the wallet address may be invalid.
+      </>
+    ),
+  };
+}
+
 function saveSearchHistory(history: string[]) {
   try {
     localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(history));
@@ -89,11 +125,11 @@ export default function Home() {
     refetch,
     isRefetching,
     probeSuggestedTimeframe,
-    loadedTimeframes,
+    cacheSuggestedDefaultTimeframe,
     currentlyLoadingTimeframe,
     currentlyLoadingTimeframes,
     hasComparisonData,
-    hasCompletedInitialLoad,
+    disabledTimeframes,
   } = useStrategy(walletKey, timeframe);
 
   // When 12-month probe finds data, auto-switch to 1Y so user sees the range that has data
@@ -102,6 +138,13 @@ export default function Home() {
       setTimeframe(probeSuggestedTimeframe);
     }
   }, [probeSuggestedTimeframe]);
+
+  // When re-searching a previously searched address, use cache to pick default timeframe (7D if recent, else 6M etc.)
+  useEffect(() => {
+    if (cacheSuggestedDefaultTimeframe) {
+      setTimeframe(cacheSuggestedDefaultTimeframe);
+    }
+  }, [cacheSuggestedDefaultTimeframe]);
 
   const { userState } = useUserState(walletKey);
 
@@ -321,12 +364,7 @@ export default function Home() {
               {(["24H", "7D", "30D", "3M", "6M", "1Y"] as Timeframe[]).map(
                 (tf) => {
                   const isCurrentlyLoading = currentlyLoadingTimeframes.has(tf);
-
-                  // Show spinner on timeframes currently being loaded
-                  const showSpinner = isCurrentlyLoading;
-
-                  // Once initial load has completed, all timeframes are clickable so the user can choose 24H/7D/30D etc. regardless of whether that range has data
-                  const isDisabled = !hasCompletedInitialLoad;
+                  const isDisabled = disabledTimeframes.has(tf);
 
                   return (
                     <button
@@ -342,7 +380,7 @@ export default function Home() {
                       }`}
                     >
                       {tf}
-                      {showSpinner && (
+                      {isCurrentlyLoading && (
                         <Loader2 className="w-3 h-3 animate-spin shrink-0" />
                       )}
                     </button>
@@ -387,23 +425,17 @@ export default function Home() {
                 <div className="p-4 rounded-full bg-destructive/10 text-destructive mb-4">
                   <AlertTriangle className="w-10 h-10" />
                 </div>
-                <h2 className="text-xl font-bold mb-2">
-                  Failed to load strategy data
-                </h2>
-                <p className="text-muted-foreground mb-6 text-sm">
-                  {error?.message ? (
-                    error.message
-                  ) : (
+                {(() => {
+                  const { title, body } = getErrorDialogContent(error, walletKey);
+                  return (
                     <>
-                      We couldn&apos;t fetch the strategy data for &quot;
-                      {walletKey === MOCK_ACCOUNT_KEY
-                        ? MOCK_ACCOUNT_DISPLAY
-                        : walletKey}
-                      &quot;. The server might be unreachable or the wallet
-                      address may be invalid.
+                      <h2 className="text-xl font-bold mb-2">{title}</h2>
+                      <p className="text-muted-foreground mb-6 text-sm">
+                        {body}
+                      </p>
                     </>
-                  )}
-                </p>
+                  );
+                })()}
                 <div className="flex gap-3 w-full">
                   <Button
                     variant="outline"
