@@ -264,8 +264,8 @@ export function getMonthsToFetch(
 }
 
 /**
- * Check if an extended timeframe has cached data that can be displayed
- * Returns true if getCachedRecords returns data for this timeframe
+ * Check if an extended timeframe has ALL months fully cached
+ * Returns true only if no months in the range need fetching
  */
 export function isExtendedTimeframeCached(
   wallet: string,
@@ -273,8 +273,12 @@ export function isExtendedTimeframeCached(
 ): boolean {
   const daysMap = { "3M": 90, "6M": 180, "1Y": 365 };
   const days = daysMap[timeframe];
-  const records = getCachedRecords(wallet, days);
-  return records.length > 0;
+  const monthsStatus = getMonthsToFetch(wallet, days);
+
+  // If any month needs fetching, the timeframe is not fully cached
+  const hasMonthsNeedingFetch = monthsStatus.some(m => m.needsFetch);
+
+  return !hasMonthsNeedingFetch;
 }
 
 /**
