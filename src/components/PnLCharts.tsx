@@ -288,7 +288,7 @@ export function PnLCharts({ data, timeframe = "7D" }: PnLChartsProps) {
                 <div
                   className="grid gap-2 w-full min-h-full"
                   style={{
-                    gridTemplateColumns: `repeat(auto-fill, minmax(${isHourly ? '4rem' : '7rem'}, 1fr))`,
+                    gridTemplateColumns: `repeat(auto-fill, minmax(${isHourly ? '6.5rem' : '7rem'}, 1fr))`,
                   }}
                 >
                   {chartData.map((day, idx) => {
@@ -310,12 +310,12 @@ export function PnLCharts({ data, timeframe = "7D" }: PnLChartsProps) {
                         <span className={`text-sm font-bold tabular-nums ${isPositive ? 'text-primary' : 'text-destructive'}`}>
                           {isPositive ? '+' : ''}{pnl.toFixed(2)}
                         </span>
-                        {!isHourly && notional !== null && (
+                        {notional !== null && (
                           <span className="text-[9px] text-foreground/60 tabular-nums">
-                            ${(notional / 1000).toFixed(1)}k
+                            ${notional >= 1000 ? `${(notional / 1000).toFixed(1)}k` : notional.toFixed(0)}
                           </span>
                         )}
-                        {!isHourly && apy !== null && (
+                        {apy !== null && (
                           <span className={`text-[9px] tabular-nums ${apy >= 0 ? 'text-primary/80' : 'text-destructive/80'}`}>
                             {apy >= 0 ? '+' : ''}{apy.toFixed(1)}% APY
                           </span>

@@ -19,8 +19,21 @@ import {
 
 const DRIFT_LOGO_BASE = "https://drift-public.s3.eu-central-1.amazonaws.com/assets/icons/markets";
 
-function marketSymbolForLogo(pairName: string): string {
-  return pairName.split("-")[0].toLowerCase();
+/** Symbols that use .webp on Drift; all others use .svg (previous behavior). */
+const WEBP_SYMBOLS = new Set(["wif", "bonk"]);
+
+/** Drift market icon URL: 1m/1k prefix stripped and .webp for those + wif/bonk; other symbols use .svg as before. */
+function marketIconUrl(pairName: string): string {
+  const symbol = pairName.split("-")[0].toLowerCase();
+  let fileSymbol = symbol;
+  let ext: "webp" | "svg" = "svg";
+  if (symbol.startsWith("1m") || symbol.startsWith("1k")) {
+    fileSymbol = symbol.slice(2);
+    ext = "webp";
+  } else if (WEBP_SYMBOLS.has(symbol)) {
+    ext = "webp";
+  }
+  return `${DRIFT_LOGO_BASE}/${fileSymbol}.${ext}`;
 }
 
 interface PositionRowProps {
@@ -102,7 +115,7 @@ function PositionRow({ pos, isExpanded, onToggle, formatCurrency, formatPercent,
           <div className="flex items-center gap-2">
             <div className="relative w-8 h-8 rounded-full bg-muted/50 flex items-center justify-center shrink-0 overflow-hidden">
               <img
-                src={`${DRIFT_LOGO_BASE}/${marketSymbolForLogo(pos.pairName)}.svg`}
+                src={marketIconUrl(pos.pairName)}
                 alt=""
                 className="w-full h-full object-contain"
                 onError={(e) => {

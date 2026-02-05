@@ -14,12 +14,14 @@ import type {
 import {
   getCachedFundingMonth,
   setCachedFundingMonth,
-  getCachedCandleMonth,
-  setCachedCandleMonth,
-  getMonthsInRange,
+  getCachedHourlyCandles,
+  setCachedHourlyCandles,
+  getCachedDailyCandles,
+  setCachedDailyCandles,
+  getTodayDateString,
+  daysBetween,
   isCurrentMonth,
   shouldRefreshMonth,
-  getTimeframeDateRange,
 } from "./cache-utils";
 
 const DRIFT_API_BASE = "https://data.api.drift.trade";
@@ -226,93 +228,126 @@ export async function fetchDailyCandles(
 }
 
 /**
- * Fetch daily candles for multiple markets with caching
- * Only fetches candles for months where the market has activity
+ * Fetch hourly candles for a market (resolution=60 minutes)
+ * Used for 24H heatmap to calculate hourly notional values
+ * Fetches 48 hours by default to ensure coverage across timezones
  */
-export async function fetchMultipleDailyCandles(
-  symbols: string[],
-  days: number,
-  marketMonths?: Map<string, { year: number; month: number }[]>
+export async function fetchHourlyCandles(
+  marketSymbol: string,
+  limit: number = 48
+): Promise<DailyCandleRecord[]> {
+  try {
+    const symbol = marketSymbol.endsWith("-PERP") ? marketSymbol : `${marketSymbol}-PERP`;
+    const url = `${DRIFT_API_BASE}/market/${symbol}/candles/60?limit=${limit}`;
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      logOnce(`hourly-fail:${symbol}:${response.status}`, `Failed to fetch hourly candles for ${symbol}: ${response.status}`);
+      return [];
+    }
+
+    const data: DailyCandlesResponse = await response.json();
+
+    if (data.success && Array.isArray(data.records)) {
+      return data.records;
+    }
+
+    return [];
+  } catch (error) {
+    logOnce(`hourly-error:${marketSymbol}`, `Error fetching hourly candles for ${marketSymbol}:`, error);
+    return [];
+  }
+}
+
+/**
+ * Fetch hourly candles for multiple markets with caching
+ * Returns a map of market symbol -> hourly candle records
+ */
+export async function fetchMultipleHourlyCandles(
+  symbols: string[]
 ): Promise<Map<string, DailyCandleRecord[]>> {
   const resultMap = new Map<string, DailyCandleRecord[]>();
-  const { startDate, endDate } = getTimeframeDateRange(days);
-  const defaultMonths = getMonthsInRange(startDate, endDate);
 
   await Promise.all(
     symbols.map(async (symbol) => {
-      const months = marketMonths?.get(symbol) ?? defaultMonths;
-
-      if (months.length === 0) {
-        resultMap.set(symbol, []);
+      // Check cache first
+      const cached = getCachedHourlyCandles(symbol);
+      if (cached) {
+        resultMap.set(symbol, cached.records);
         return;
       }
 
-      const allCandles: DailyCandleRecord[] = [];
-      const monthsNeedingFetch: { year: number; month: number }[] = [];
+      // Fetch fresh data (use default 48 hours for timezone coverage)
+      const candles = await fetchHourlyCandles(symbol);
+      if (candles.length > 0) {
+        setCachedHourlyCandles(symbol, candles);
+        resultMap.set(symbol, candles);
+      } else {
+        resultMap.set(symbol, []);
+      }
+    })
+  );
 
-      // Check cache for each month
-      for (const { year, month } of months) {
-        const cached = getCachedCandleMonth(symbol, year, month);
-        const isCurrent = isCurrentMonth(year, month);
+  return resultMap;
+}
 
-        if (cached && !shouldRefreshMonth(cached, isCurrent)) {
-          allCandles.push(...cached.records);
-        } else {
-          monthsNeedingFetch.push({ year, month });
+/**
+ * Fetch daily candles for multiple markets with simple caching
+ * - First call: fetch 366 days and cache
+ * - Subsequent calls: fetch only the diff (new days since last cached date)
+ */
+export async function fetchMultipleDailyCandles(
+  symbols: string[]
+): Promise<Map<string, DailyCandleRecord[]>> {
+  const resultMap = new Map<string, DailyCandleRecord[]>();
+  const today = getTodayDateString();
+
+  await Promise.all(
+    symbols.map(async (symbol) => {
+      const cached = getCachedDailyCandles(symbol);
+
+      if (cached && cached.lastDate === today) {
+        // Cache is up to date, use it directly
+        resultMap.set(symbol, cached.records);
+        return;
+      }
+
+      if (cached && cached.records.length > 0) {
+        // Cache exists but needs update - fetch only the diff
+        const diffDays = daysBetween(cached.lastDate, today);
+
+        if (diffDays > 0 && diffDays < 30) {
+          // Fetch just the missing days (plus 1 for safety)
+          const newCandles = await fetchDailyCandles(symbol, diffDays + 1);
+
+          if (newCandles.length > 0) {
+            // Merge: filter out old duplicates, add new candles
+            const existingTs = new Set(cached.records.map((c) => c.ts));
+            const uniqueNew = newCandles.filter((c) => !existingTs.has(c.ts));
+            const merged = [...cached.records, ...uniqueNew];
+
+            // Keep only last 366 days and sort by timestamp
+            const cutoffTs = Math.floor(Date.now() / 1000) - 366 * 24 * 60 * 60;
+            const filtered = merged
+              .filter((c) => c.ts >= cutoffTs)
+              .sort((a, b) => a.ts - b.ts);
+
+            setCachedDailyCandles(symbol, filtered, today);
+            resultMap.set(symbol, filtered);
+            return;
+          }
         }
       }
 
-      // If all months are cached, use cached data
-      if (monthsNeedingFetch.length === 0) {
-        resultMap.set(symbol, allCandles);
-        return;
-      }
-
-      // Calculate how many days of data we need
-      const oldestMonth = months.reduce((oldest, m) => {
-        const date = new Date(m.year, m.month - 1, 1);
-        return date < oldest ? date : oldest;
-      }, new Date());
-      const daysNeeded =
-        Math.ceil(
-          (Date.now() - oldestMonth.getTime()) / (24 * 60 * 60 * 1000)
-        ) + 31;
-
-      // Fetch candles
-      const candles = await fetchDailyCandles(
-        symbol,
-        Math.min(daysNeeded, days)
-      );
+      // No cache or cache too old - fetch full 366 days
+      const candles = await fetchDailyCandles(symbol, 366);
 
       if (candles.length > 0) {
-        // Group and cache by month
-        const candlesByMonth = new Map<string, DailyCandleRecord[]>();
-        for (const candle of candles) {
-          const date = new Date(candle.ts * 1000);
-          const key = `${date.getFullYear()}-${date.getMonth() + 1}`;
-          if (!candlesByMonth.has(key)) {
-            candlesByMonth.set(key, []);
-          }
-          candlesByMonth.get(key)!.push(candle);
-        }
-
-        for (const [key, monthCandles] of candlesByMonth) {
-          const [yearStr, monthStr] = key.split("-");
-          setCachedCandleMonth(
-            symbol,
-            parseInt(yearStr),
-            parseInt(monthStr),
-            monthCandles
-          );
-        }
-
-        const cutoffTs = Math.floor(Date.now() / 1000) - days * 24 * 60 * 60;
-        resultMap.set(
-          symbol,
-          candles.filter((c) => c.ts >= cutoffTs)
-        );
+        const sorted = [...candles].sort((a, b) => a.ts - b.ts);
+        setCachedDailyCandles(symbol, sorted, today);
+        resultMap.set(symbol, sorted);
       } else {
-        resultMap.set(symbol, allCandles);
+        resultMap.set(symbol, cached?.records ?? []);
       }
     })
   );
@@ -341,11 +376,6 @@ export async function fetchUserState(
     }
 
     const data: DriftUserResponse = await response.json();
-
-    if (!data.success) {
-      console.warn(`Failed to fetch user state for ${accountId}`);
-      return null;
-    }
 
     return data;
   } catch (error) {

@@ -4,7 +4,10 @@
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { fetchMultipleDailyCandles } from "@/services/drift-api";
+import {
+  fetchMultipleDailyCandles,
+  fetchMultipleHourlyCandles,
+} from "@/services/drift-api";
 import { transformDriftDataToStrategy } from "@/services/drift-transformer";
 import { mockStrategy } from "@/mock-strategy";
 import { clearCurrentMonthFundingCache } from "@/services/cache-utils";
@@ -13,7 +16,13 @@ import {
   fetchExtendedTimeframe,
   fetchProbe12Months,
 } from "@/services/funding-fetcher";
-import { getCacheState, getCachedRecords, selectDefaultTimeframe } from "@/services/cache-manager";
+import {
+  getCacheState,
+  getCachedRecords,
+  selectDefaultTimeframe,
+  getCachedExtendedTimeframes,
+  isExtendedTimeframeCached,
+} from "@/services/cache-manager";
 import { useLoadingState } from "./use-loading-state";
 import { usePriceEnrichment } from "./use-price-enrichment";
 import {
@@ -22,10 +31,17 @@ import {
 } from "./use-timeframe-buttons";
 
 import type { StrategyResponse } from "@/types/schema";
-import type { DriftFundingPaymentRecord, DailyCandleRecord } from "@/services/drift-types";
+import type {
+  DriftFundingPaymentRecord,
+  DailyCandleRecord,
+} from "@/services/drift-types";
 import { getMarketName } from "@/services/drift-types";
 import type { Timeframe, LoadingProgress } from "@/types/loading-types";
-import { getTimeframeDays, isExtendedTimeframe, EXTENDED_TIMEFRAMES } from "@/types/loading-types";
+import {
+  getTimeframeDays,
+  isExtendedTimeframe,
+  EXTENDED_TIMEFRAMES,
+} from "@/types/loading-types";
 
 // Re-export types for backward compatibility
 export type { Timeframe };
@@ -115,23 +131,44 @@ export function useStrategy(
 ): UseStrategyResult {
   // Core state
   const [allRecords, setAllRecords] = useState<DriftFundingPaymentRecord[]>([]);
-  const [loadingProgress, setLoadingProgress] = useState<LoadingProgress | null>(null);
+  const [loadingProgress, setLoadingProgress] =
+    useState<LoadingProgress | null>(null);
   const [isRefetching] = useState(false); // Refetch state (could use for UI)
-  const [probeSuggestedTimeframe, setProbeSuggestedTimeframe] = useState<Timeframe | null>(null);
-  const [cacheSuggestedDefaultTimeframe, setCacheSuggestedDefaultTimeframe] = useState<Timeframe | null>(null);
-  const [candleData, setCandleData] = useState<Map<string, DailyCandleRecord[]>>(new Map());
-  const [fetchedTimeframes, setFetchedTimeframes] = useState<Set<Timeframe>>(new Set());
+  const [probeSuggestedTimeframe, setProbeSuggestedTimeframe] =
+    useState<Timeframe | null>(null);
+  const [cacheSuggestedDefaultTimeframe, setCacheSuggestedDefaultTimeframe] =
+    useState<Timeframe | null>(null);
+  const [candleData, setCandleData] = useState<
+    Map<string, DailyCandleRecord[]>
+  >(new Map());
+  const [fetchedTimeframes, setFetchedTimeframes] = useState<Set<Timeframe>>(
+    new Set()
+  );
 
   // Use loading state machine
   const loadingState = useLoadingState();
-  const { state, reset, startFresh, startFromCache, on7DLoaded, on14DMilestone, on30DLoaded, onExtendedLoaded, onProbeComplete, setFetching, setError } = loadingState;
+  const {
+    state,
+    reset,
+    startFresh,
+    startFromCache,
+    on7DLoaded,
+    on14DMilestone,
+    on30DLoaded,
+    onExtendedLoaded,
+    onProbeComplete,
+    setFetching,
+    setError,
+  } = loadingState;
 
   // Ref to prevent concurrent fetches
   const fetchingRef = useRef(false);
   const prevWalletRef = useRef(walletSubkey);
   const initialFetchDoneRef = useRef(false);
   const currentWalletRef = useRef(walletSubkey);
-  const extendedRecordsRef = useRef<Map<Timeframe, DriftFundingPaymentRecord[]>>(new Map());
+  const extendedRecordsRef = useRef<
+    Map<Timeframe, DriftFundingPaymentRecord[]>
+  >(new Map());
   const extendedFetchingRef = useRef(false);
 
   currentWalletRef.current = walletSubkey;
@@ -144,7 +181,12 @@ export function useStrategy(
     if (allRecords.length === 0) return null;
     const filteredRecords = filterRecordsByTimeframe(allRecords, timeframe);
     if (filteredRecords.length === 0) return null;
-    return transformDriftDataToStrategy(walletSubkey, filteredRecords, timeframe, candleData);
+    return transformDriftDataToStrategy(
+      walletSubkey,
+      filteredRecords,
+      timeframe,
+      candleData
+    );
   }, [walletSubkey, timeframe, allRecords, candleData]);
 
   // Price enrichment for non-mock data
@@ -190,7 +232,9 @@ export function useStrategy(
         }
       }
       if (cachedRecords && cachedRecords.length > 0) {
-        console.log(`[Main] Loading cached ${timeframe} records: ${cachedRecords.length}`);
+        console.log(
+          `[Main] Loading cached ${timeframe} records: ${cachedRecords.length}`
+        );
         setAllRecords(cachedRecords);
       } else {
         setAllRecords([]);
@@ -221,9 +265,41 @@ export function useStrategy(
 
     const cacheState = getCacheState(walletSubkey);
     const useCache = cacheState.hasCache && cacheState.daysCovered >= 7;
+
+    // Check which extended timeframes are already fully cached
+    const cachedExtended = useCache ? getCachedExtendedTimeframes(walletSubkey) : [];
+
+    // Track if we started from cache with extended data already set up
+    // This prevents milestone callbacks from resetting the filtered queue
+    const startedFrom30DCache = useCache && cachedExtended.length > 0;
+
     if (useCache) {
-      startFromCache(cacheState.daysCovered);
+      const filteredQueue = (["3M", "6M", "1Y"] as const).filter(
+        (tf) => !cachedExtended.includes(tf)
+      );
+      console.log("[Main] startFromCache", {
+        cachedExtended,
+        extendedQueue: filteredQueue,
+        startedFrom30DCache,
+      });
+      startFromCache(cacheState.daysCovered, cachedExtended);
       setCacheSuggestedDefaultTimeframe(selectDefaultTimeframe(cacheState));
+
+      // Pre-populate fetchedTimeframes with cached extended timeframes
+      if (cachedExtended.length > 0) {
+        setFetchedTimeframes((prev) => new Set([...prev, ...cachedExtended]));
+      }
+
+      // If all extended timeframes are cached, skip the fetch entirely
+      // Just load from cache and mark initial fetch as done
+      if (filteredQueue.length === 0) {
+        console.log("[Main] All timeframes cached, skipping fetch");
+        const days = getTimeframeDays(timeframe);
+        const cachedRecords = getCachedRecords(walletSubkey, days);
+        setAllRecords(cachedRecords);
+        initialFetchDoneRef.current = true;
+        return; // Skip fetchData call
+      }
     }
 
     const fetchData = async (fromCache: boolean) => {
@@ -257,6 +333,10 @@ export function useStrategy(
         // Fetch incrementally up to 30 days
         await fetchFundingIncremental(walletSubkey, {
           onMilestone: (milestone) => {
+            // Skip milestone state transitions if we already started from cache
+            // with extended timeframes set up - the state is already correct
+            if (startedFrom30DCache) return;
+
             if (milestone === "7d") on7DLoaded(7);
             if (milestone === "14d") on14DMilestone();
             if (milestone === "30d") on30DLoaded();
@@ -271,7 +351,7 @@ export function useStrategy(
             setAllRecords(recs);
             setLoadingProgress(null);
 
-            if (recs.length === 0) {
+            if (recs.length === 0 && !startedFrom30DCache) {
               on30DLoaded();
               probeFor12Months();
             }
@@ -293,7 +373,11 @@ export function useStrategy(
 
       await fetchProbe12Months(walletSubkey, {
         onProgress: (loaded, total) => {
-          setLoadingProgress({ loadedMonths: loaded, totalMonths: total, phase: "fetch" });
+          setLoadingProgress({
+            loadedMonths: loaded,
+            totalMonths: total,
+            phase: "fetch",
+          });
         },
         onComplete: (records) => {
           if (currentWalletRef.current !== walletSubkey) return;
@@ -306,7 +390,11 @@ export function useStrategy(
             }
             onProbeComplete();
           } else {
-            setError(new Error("No funding history found for this address in the past 12 months."));
+            setError(
+              new Error(
+                "No funding history found for this address in the past 12 months."
+              )
+            );
           }
           setLoadingProgress(null);
         },
@@ -315,7 +403,21 @@ export function useStrategy(
     };
 
     fetchData(useCache);
-  }, [walletSubkey, timeframe, fetchedTimeframes, state.phase, startFresh, startFromCache, on7DLoaded, on14DMilestone, on30DLoaded, onExtendedLoaded, onProbeComplete, setFetching, setError]);
+  }, [
+    walletSubkey,
+    timeframe,
+    fetchedTimeframes,
+    state.phase,
+    startFresh,
+    startFromCache,
+    on7DLoaded,
+    on14DMilestone,
+    on30DLoaded,
+    onExtendedLoaded,
+    onProbeComplete,
+    setFetching,
+    setError,
+  ]);
 
   // Auto-fetch extended timeframes sequentially after 30D
   useEffect(() => {
@@ -323,7 +425,8 @@ export function useStrategy(
     if (walletSubkey === "main-account") return;
 
     // Only proceed if phase indicates we should fetch extended data
-    if (state.phase !== "30d_loaded" && state.phase !== "loading_extended") return;
+    if (state.phase !== "30d_loaded" && state.phase !== "loading_extended")
+      return;
 
     // Get next timeframe to fetch
     const nextTimeframe = state.extendedQueue[0];
@@ -334,9 +437,67 @@ export function useStrategy(
     if (extendedFetchingRef.current) return;
 
     // Let main effect handle it when user selected an extended timeframe that is in queue and not yet fetched
-    if (isExtendedTimeframe(timeframe) && state.extendedQueue.includes(timeframe) && !fetchedTimeframes.has(timeframe)) return;
+    if (
+      isExtendedTimeframe(timeframe) &&
+      state.extendedQueue.includes(timeframe) &&
+      !fetchedTimeframes.has(timeframe)
+    )
+      return;
 
-    console.log(`[Auto-fetch] Starting fetch for ${nextTimeframe}, phase: ${state.phase}, queue: ${state.extendedQueue.join(",")}`);
+    // If a larger extended timeframe is already loaded (e.g. 1Y from cache), mark all such queue items as done so we never show a spinner on 6M
+    const EXTENDED_ORDER: ("3M" | "6M" | "1Y")[] = ["3M", "6M", "1Y"];
+    const toSkip = state.extendedQueue.filter((tf) => {
+      const i = EXTENDED_ORDER.indexOf(tf as "3M" | "6M" | "1Y");
+      return (
+        i >= 0 &&
+        EXTENDED_ORDER.slice(i + 1).some((larger) => fetchedTimeframes.has(larger))
+      );
+    });
+    if (toSkip.length > 0) {
+      const nextSet = new Set(fetchedTimeframes);
+      for (const tf of toSkip) {
+        const days = getTimeframeDays(tf);
+        const cachedData = getCachedRecords(walletSubkey, days);
+        console.log(
+          `[Auto-fetch] Skipping ${tf}, larger timeframe already loaded (records: ${cachedData.length})`
+        );
+        extendedRecordsRef.current.set(tf, cachedData);
+        nextSet.add(tf);
+        onExtendedLoaded(tf);
+      }
+      setFetchedTimeframes(nextSet);
+      return;
+    }
+
+    // Check if this timeframe already has cached data (all months in range present) - if so, skip fetch and mark as done
+    const days = getTimeframeDays(nextTimeframe);
+    const cachedData = getCachedRecords(walletSubkey, days);
+    const monthsCached = isExtendedTimeframeCached(
+      walletSubkey,
+      nextTimeframe as "3M" | "6M" | "1Y"
+    );
+    console.log("[Auto-fetch] condition check", {
+      nextTimeframe,
+      extendedQueue: state.extendedQueue,
+      alreadyFetched: fetchedTimeframes.has(nextTimeframe),
+      cachedRecordsLength: cachedData.length,
+      monthsCached,
+    });
+    if (monthsCached) {
+      console.log(
+        `[Auto-fetch] Skipping ${nextTimeframe}, months already cached (records: ${cachedData.length})`
+      );
+      extendedRecordsRef.current.set(nextTimeframe, cachedData);
+      setFetchedTimeframes((prev) => new Set([...prev, nextTimeframe]));
+      onExtendedLoaded(nextTimeframe);
+      return;
+    }
+
+    console.log(
+      `[Auto-fetch] Starting fetch for ${nextTimeframe}, phase: ${
+        state.phase
+      }, queue: ${state.extendedQueue.join(",")}`
+    );
 
     // Sync loading icon with current extended fetch so spinner shows the right timeframe
     setFetching(nextTimeframe);
@@ -356,7 +517,9 @@ export function useStrategy(
           onProgress: setLoadingProgress,
           onComplete: (recs) => {
             if (currentWalletRef.current !== walletSubkey) return;
-            console.log(`[Auto-fetch] Completed ${nextTimeframe}, records: ${recs.length}`);
+            console.log(
+              `[Auto-fetch] Completed ${nextTimeframe}, records: ${recs.length}`
+            );
             extendedRecordsRef.current.set(nextTimeframe, recs);
             if (timeframe === nextTimeframe) {
               setAllRecords(recs);
@@ -365,7 +528,10 @@ export function useStrategy(
             setLoadingProgress(null);
           },
           onError: (error) => {
-            console.warn(`[Auto-fetch] Failed to fetch ${nextTimeframe}:`, error);
+            console.warn(
+              `[Auto-fetch] Failed to fetch ${nextTimeframe}:`,
+              error
+            );
             setError(error);
           },
         });
@@ -379,7 +545,16 @@ export function useStrategy(
     };
 
     fetchNext();
-  }, [walletSubkey, timeframe, state.phase, state.extendedQueue, fetchedTimeframes, onExtendedLoaded, setFetching, setError]);
+  }, [
+    walletSubkey,
+    timeframe,
+    state.phase,
+    state.extendedQueue,
+    fetchedTimeframes,
+    onExtendedLoaded,
+    setFetching,
+    setError,
+  ]);
 
   // Fetch candle data for heatmap
   useEffect(() => {
@@ -394,33 +569,32 @@ export function useStrategy(
       return;
     }
 
-    // Build market-month map
-    const marketMonths = new Map<string, { year: number; month: number }[]>();
+    // Get unique market symbols from records
+    const symbolsSet = new Set<string>();
     for (const record of filteredRecords) {
-      const symbol = getMarketName(record.marketIndex);
-      const date = new Date(record.ts * 1000);
-      const year = date.getFullYear();
-      const month = date.getMonth() + 1;
-
-      if (!marketMonths.has(symbol)) {
-        marketMonths.set(symbol, []);
-      }
-
-      const months = marketMonths.get(symbol)!;
-      if (!months.some((m) => m.year === year && m.month === month)) {
-        months.push({ year, month });
-      }
+      symbolsSet.add(getMarketName(record.marketIndex));
     }
-
-    const symbols = [...marketMonths.keys()];
-    const days = getTimeframeDays(timeframe);
+    const symbols = [...symbolsSet];
 
     let cancelled = false;
-    fetchMultipleDailyCandles(symbols, days, marketMonths)
-      .then((candles) => {
-        if (!cancelled) setCandleData(candles);
-      })
-      .catch(console.error);
+
+    if (timeframe === "24H") {
+      // Fetch hourly candles for 24H timeframe
+      fetchMultipleHourlyCandles(symbols)
+        .then((candles) => {
+          if (!cancelled) setCandleData(candles);
+        })
+        .catch(console.error);
+    } else {
+      // Fetch daily candles (366 days cached, only fetches diff on subsequent calls)
+      fetchMultipleDailyCandles(symbols)
+        .then((candles) => {
+          if (!cancelled) {
+            setCandleData(candles);
+          }
+        })
+        .catch(console.error);
+    }
 
     return () => {
       cancelled = true;
@@ -475,9 +649,11 @@ export function useStrategy(
 
   // Compute derived state for backward compatibility
   const isLoading = state.phase === "loading_7d" || state.phase === "idle";
-  const isLoadingMore = state.phase === "7d_loaded" || state.phase === "loading_30d";
+  const isLoadingMore =
+    state.phase === "7d_loaded" || state.phase === "loading_30d";
   const isInitialFetch = state.phase === "loading_7d";
-  const hasCompletedInitialLoad = state.phase !== "idle" && state.phase !== "loading_7d";
+  const hasCompletedInitialLoad =
+    state.phase !== "idle" && state.phase !== "loading_7d";
 
   const availableTimeframes = useMemo(() => {
     if (walletSubkey === "main-account") {
@@ -572,7 +748,8 @@ export function useStrategy(
     probeSuggestedTimeframe,
     cacheSuggestedDefaultTimeframe,
     isInitialFetch,
-    hasCompletedInitialLoad: walletSubkey === "main-account" || hasCompletedInitialLoad,
+    hasCompletedInitialLoad:
+      walletSubkey === "main-account" || hasCompletedInitialLoad,
     loadedTimeframes,
     currentlyLoadingTimeframe,
     currentlyLoadingTimeframes,
@@ -592,17 +769,22 @@ function getMockData(timeframe: Timeframe): StrategyResponse {
     const allHourlyPnl: number[] = [];
 
     for (let i = 0; i < 48; i++) {
-      const hourPnl = i % 4 === 0 ? 8 + Math.random() * 6 : Math.random() * 4 - 1;
+      const hourPnl =
+        i % 4 === 0 ? 8 + Math.random() * 6 : Math.random() * 4 - 1;
       allHourlyPnl.push(hourPnl);
     }
 
     const thisPeriodSum = allHourlyPnl.slice(0, 24).reduce((a, b) => a + b, 0);
-    const previousPeriodSum = allHourlyPnl.slice(24, 48).reduce((a, b) => a + b, 0);
+    const previousPeriodSum = allHourlyPnl
+      .slice(24, 48)
+      .reduce((a, b) => a + b, 0);
 
     const hourlyMetrics = Array.from({ length: 24 }, (_, i) => {
       const d = new Date(now);
       d.setHours(d.getHours() - (23 - i), 0, 0, 0);
-      const localKey = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:00:00`;
+      const localKey = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(
+        d.getDate()
+      )}T${pad(d.getHours())}:00:00`;
       cum += allHourlyPnl[i];
       return {
         id: i + 1,
@@ -623,10 +805,15 @@ function getMockData(timeframe: Timeframe): StrategyResponse {
   }
 
   if (timeframe === "7D") {
-    const sevenDays = mockStrategy.dailyMetrics.slice(0, 7).map((m, i) => ({ ...m, id: i + 1 }));
+    const sevenDays = mockStrategy.dailyMetrics
+      .slice(0, 7)
+      .map((m, i) => ({ ...m, id: i + 1 }));
     const thisPeriodSum = sevenDays.reduce((s, m) => s + Number(m.dailyPnl), 0);
     const previousSeven = mockStrategy.dailyMetrics.slice(7, 14);
-    const previousPeriodSum = previousSeven.reduce((s, m) => s + Number(m.dailyPnl), 0);
+    const previousPeriodSum = previousSeven.reduce(
+      (s, m) => s + Number(m.dailyPnl),
+      0
+    );
 
     return {
       ...mockStrategy,
@@ -637,7 +824,9 @@ function getMockData(timeframe: Timeframe): StrategyResponse {
   }
 
   if (timeframe === "30D") {
-    const thirtyDays = mockStrategy.dailyMetrics.slice(0, 30).map((m, i) => ({ ...m, id: i + 1 }));
+    const thirtyDays = mockStrategy.dailyMetrics
+      .slice(0, 30)
+      .map((m, i) => ({ ...m, id: i + 1 }));
     return { ...mockStrategy, dailyMetrics: thirtyDays };
   }
 
@@ -650,7 +839,9 @@ function getMockData(timeframe: Timeframe): StrategyResponse {
   const extendedMetrics = Array.from({ length: days }, (_, i) => {
     const d = new Date(now);
     d.setDate(d.getDate() - (days - 1 - i));
-    const dateKey = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const dateKey = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(
+      d.getDate()
+    )}`;
     const dailyPnl = 15 + Math.random() * 30 - 10;
     cum += dailyPnl;
     return {

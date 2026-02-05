@@ -8,6 +8,8 @@ export const CACHE_KEYS = {
     `drift:funding:${wallet.slice(0, 8)}:${year}-${month.toString().padStart(2, "0")}`,
   candleMonth: (market: string, year: number, month: number) =>
     `drift:candles:${market}:${year}-${month.toString().padStart(2, "0")}`,
+  hourlyCandles: (market: string) => `drift:hourly-candles:${market}`,
+  dailyCandles: (market: string) => `drift:daily-candles:${market}`,
 };
 
 /**
@@ -334,4 +336,124 @@ export function formatDateYYYYMMDD(date: Date): string {
   const month = (date.getMonth() + 1).toString().padStart(2, "0");
   const day = date.getDate().toString().padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+/**
+ * Cached hourly candle data structure
+ * Short TTL (10 minutes) since this is for 24H view
+ */
+export interface CachedHourlyCandles {
+  records: DailyCandleRecord[]; // Same structure as daily candles
+  fetchedAt: number;
+}
+
+const HOURLY_CANDLE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+/**
+ * Get cached hourly candles for a market
+ */
+export function getCachedHourlyCandles(
+  market: string
+): CachedHourlyCandles | null {
+  try {
+    const key = CACHE_KEYS.hourlyCandles(market);
+    const stored = localStorage.getItem(key);
+    if (!stored) return null;
+    const cached = JSON.parse(stored) as CachedHourlyCandles;
+    // Check if cache is expired
+    if (Date.now() - cached.fetchedAt > HOURLY_CANDLE_TTL_MS) {
+      localStorage.removeItem(key);
+      return null;
+    }
+    return cached;
+  } catch (e) {
+    console.warn("Failed to read hourly candle cache:", e);
+    return null;
+  }
+}
+
+/**
+ * Save hourly candles to cache
+ */
+export function setCachedHourlyCandles(
+  market: string,
+  records: DailyCandleRecord[]
+): void {
+  try {
+    const key = CACHE_KEYS.hourlyCandles(market);
+    const data: CachedHourlyCandles = {
+      records,
+      fetchedAt: Date.now(),
+    };
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch (e) {
+    console.warn("Failed to save hourly candle cache:", e);
+  }
+}
+
+/**
+ * Simple daily candle cache - stores 366 days per market
+ * lastDate is YYYY-MM-DD of the most recent candle
+ */
+export interface CachedDailyCandles {
+  records: DailyCandleRecord[];
+  lastDate: string; // YYYY-MM-DD of the most recent candle
+}
+
+/**
+ * Get cached daily candles for a market
+ */
+export function getCachedDailyCandles(
+  market: string
+): CachedDailyCandles | null {
+  try {
+    const key = CACHE_KEYS.dailyCandles(market);
+    const stored = localStorage.getItem(key);
+    if (!stored) return null;
+    return JSON.parse(stored) as CachedDailyCandles;
+  } catch (e) {
+    console.warn("Failed to read daily candle cache:", e);
+    return null;
+  }
+}
+
+/**
+ * Save daily candles to cache
+ */
+export function setCachedDailyCandles(
+  market: string,
+  records: DailyCandleRecord[],
+  lastDate: string
+): void {
+  try {
+    const key = CACHE_KEYS.dailyCandles(market);
+    const data: CachedDailyCandles = {
+      records,
+      lastDate,
+    };
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch (e) {
+    console.warn("Failed to save daily candle cache:", e);
+  }
+}
+
+/**
+ * Get today's date as YYYY-MM-DD
+ */
+export function getTodayDateString(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = (now.getMonth() + 1).toString().padStart(2, "0");
+  const day = now.getDate().toString().padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Calculate days between two YYYY-MM-DD dates
+ */
+export function daysBetween(date1: string, date2: string): number {
+  const d1 = new Date(date1);
+  const d2 = new Date(date2);
+  const diffTime = Math.abs(d2.getTime() - d1.getTime());
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 }

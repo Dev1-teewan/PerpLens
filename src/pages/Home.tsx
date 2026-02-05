@@ -638,7 +638,7 @@ export default function Home() {
                       }`}
                     >
                       {userState?.account?.health != null
-                        ? `${userState.account.health.toFixed(1)}%`
+                        ? `${Number(userState.account.health).toFixed(1)}%`
                         : "—"}
                     </span>
                   </div>
@@ -679,7 +679,7 @@ export default function Home() {
                       }`}
                     >
                       {userState?.account?.leverage != null
-                        ? `${userState.account.leverage.toFixed(2)}x`
+                        ? `${Number(userState.account.leverage).toFixed(2)}x`
                         : "—"}
                     </span>
                   </div>

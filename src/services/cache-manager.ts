@@ -233,6 +233,33 @@ export function getMonthsToFetch(
 }
 
 /**
+ * Check if an extended timeframe has cached data that can be displayed
+ * Returns true if getCachedRecords returns data for this timeframe
+ */
+export function isExtendedTimeframeCached(
+  wallet: string,
+  timeframe: "3M" | "6M" | "1Y"
+): boolean {
+  const daysMap = { "3M": 90, "6M": 180, "1Y": 365 };
+  const days = daysMap[timeframe];
+  const records = getCachedRecords(wallet, days);
+  return records.length > 0;
+}
+
+/**
+ * Get list of extended timeframes that have cached data to display
+ */
+export function getCachedExtendedTimeframes(
+  wallet: string
+): ("3M" | "6M" | "1Y")[] {
+  const cached: ("3M" | "6M" | "1Y")[] = [];
+  if (isExtendedTimeframeCached(wallet, "3M")) cached.push("3M");
+  if (isExtendedTimeframeCached(wallet, "6M")) cached.push("6M");
+  if (isExtendedTimeframeCached(wallet, "1Y")) cached.push("1Y");
+  return cached;
+}
+
+/**
  * Select default timeframe based on cache state
  * For returning addresses with cached data
  */

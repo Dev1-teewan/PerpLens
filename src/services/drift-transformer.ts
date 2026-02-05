@@ -17,6 +17,8 @@ interface HourlyAggregation {
   hourKey: string;
   totalFunding: number;
   recordCount: number;
+  perMarketFunding: Map<number, number>; // marketIndex -> funding
+  perMarketBaseAsset: Map<number, number>; // marketIndex -> baseAssetAmount (absolute)
 }
 
 interface DailyRecordAggregation {
@@ -65,6 +67,46 @@ function getOraclePriceForDate(
   // Find candle that falls within this day
   const candle = candles.find((c) => c.ts >= dateStart && c.ts < dateEnd);
   return candle ? candle.oracleClose : null;
+}
+
+/**
+ * Get oracle price for a specific hour from hourly candle data
+ * hourKey format: YYYY-MM-DDTHH
+ * Uses a flexible matching approach to handle timezone differences
+ */
+function getOraclePriceForHour(
+  candles: DailyCandleRecord[],
+  hourKey: string
+): number | null {
+  if (candles.length === 0) return null;
+
+  // Parse hourKey (YYYY-MM-DDTHH)
+  const [datePart, hourStr] = hourKey.split("T");
+  const [year, month, day] = datePart.split("-").map(Number);
+  const hour = parseInt(hourStr, 10);
+
+  const targetTs = new Date(year, month - 1, day, hour, 0, 0).getTime() / 1000;
+
+  // Find candle within +/- 1 hour of target, or use the closest one
+  let bestCandle = candles[0];
+  let bestDiff = Math.abs(candles[0].ts - targetTs);
+
+  for (const candle of candles) {
+    const diff = Math.abs(candle.ts - targetTs);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      bestCandle = candle;
+    }
+  }
+
+  // Only use if within 2 hours (to avoid using very old prices)
+  if (bestDiff <= 2 * 60 * 60) {
+    return bestCandle.oracleClose;
+  }
+
+  // Fallback: use the most recent candle price
+  const sortedCandles = [...candles].sort((a, b) => b.ts - a.ts);
+  return sortedCandles[0]?.oracleClose ?? null;
 }
 
 /**
@@ -178,18 +220,35 @@ export function transformDriftDataToStrategy(
     for (const record of records) {
       const hourKey = formatLocalHourKey(record.ts);
       if (!hourlyMap.has(hourKey)) {
-        hourlyMap.set(hourKey, { hourKey, totalFunding: 0, recordCount: 0 });
+        hourlyMap.set(hourKey, {
+          hourKey,
+          totalFunding: 0,
+          recordCount: 0,
+          perMarketFunding: new Map(),
+          perMarketBaseAsset: new Map(),
+        });
       }
       const agg = hourlyMap.get(hourKey)!;
-      agg.totalFunding += parseFloat(record.fundingPayment);
+      const funding = parseFloat(record.fundingPayment);
+      const baseAsset = Math.abs(parseFloat(record.baseAssetAmount));
+
+      agg.totalFunding += funding;
       agg.recordCount++;
+
+      // Aggregate per-market data
+      const currentFunding = agg.perMarketFunding.get(record.marketIndex) || 0;
+      agg.perMarketFunding.set(record.marketIndex, currentFunding + funding);
+
+      // Keep the latest base asset amount for each market in this hour
+      agg.perMarketBaseAsset.set(record.marketIndex, baseAsset);
     }
     const sortedHours = Array.from(hourlyMap.entries())
       .sort(([a], [b]) => a.localeCompare(b));
     let cumulativePnl = 0;
     dailyMetrics = sortedHours.map(([hourKey, agg], index) => {
       cumulativePnl += agg.totalFunding;
-      return {
+
+      const metric: DailyMetric = {
         id: index + 1,
         strategyId: 1,
         date: new Date(hourKey + ":00:00"),
@@ -197,6 +256,45 @@ export function transformDriftDataToStrategy(
         dailyFunding: agg.totalFunding.toFixed(2),
         cumulativePnl: cumulativePnl.toFixed(2),
       };
+
+      // Enrich with notional/APY if hourly candle data is provided
+      if (candleData && candleData.size > 0) {
+        let totalNotional = 0;
+        const breakdowns: DailyMarketBreakdown[] = [];
+
+        for (const [marketIndex, marketFunding] of agg.perMarketFunding) {
+          const marketName = getMarketName(marketIndex);
+          const baseAsset = agg.perMarketBaseAsset.get(marketIndex) || 0;
+          const candles = candleData.get(marketName);
+          const price = candles ? getOraclePriceForHour(candles, hourKey) : null;
+
+          if (price !== null && baseAsset > 0) {
+            const notional = baseAsset * price;
+            totalNotional += notional;
+            // For hourly, APY = hourly ROI * 24 * 365
+            const hourlyRoi = notional > 0 ? (marketFunding / notional) * 100 : 0;
+            const apy = hourlyRoi * 24 * 365;
+
+            breakdowns.push({
+              marketIndex,
+              marketName,
+              dailyFunding: marketFunding,
+              notionalValue: notional,
+              apy,
+            });
+          }
+        }
+
+        if (totalNotional > 0) {
+          metric.notionalValue = totalNotional.toFixed(2);
+          const hourlyRoi = (agg.totalFunding / totalNotional) * 100;
+          const portfolioApy = hourlyRoi * 24 * 365;
+          metric.portfolioApy = portfolioApy.toFixed(2);
+          metric.perMarketBreakdown = breakdowns;
+        }
+      }
+
+      return metric;
     });
   } else {
     const dailyMap = new Map<string, DailyRecordAggregation>();

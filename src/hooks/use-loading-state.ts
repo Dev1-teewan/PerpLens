@@ -17,7 +17,7 @@ import { initialLoadingState, EXTENDED_TIMEFRAMES } from "@/types/loading-types"
 export type LoadingAction =
   | { type: "RESET" }
   | { type: "START_FRESH" }
-  | { type: "START_FROM_CACHE"; daysLoaded: number }
+  | { type: "START_FROM_CACHE"; daysLoaded: number; cachedExtendedTimeframes?: ("3M" | "6M" | "1Y")[] }
   | { type: "7D_LOADED"; daysLoaded: number }
   | { type: "14D_MILESTONE" }
   | { type: "30D_LOADED" }
@@ -42,7 +42,7 @@ function loadingReducer(state: LoadingState, action: LoadingAction): LoadingStat
         currentlyFetching: "7D",
       };
 
-    case "START_FROM_CACHE":
+    case "START_FROM_CACHE": {
       // Determine phase based on days loaded in cache
       let phase: LoadingPhase = "loading_7d";
       if (action.daysLoaded >= 30) {
@@ -50,15 +50,40 @@ function loadingReducer(state: LoadingState, action: LoadingAction): LoadingStat
       } else if (action.daysLoaded >= 7) {
         phase = "7d_loaded";
       }
+
+      // Filter out already cached extended timeframes from the queue
+      const cachedExtended = action.cachedExtendedTimeframes || [];
+      const baseQueue: ("3M" | "6M" | "1Y")[] = ["3M", "6M", "1Y"];
+      const filteredQueue = baseQueue.filter(tf => !cachedExtended.includes(tf));
+      console.log("[LoadingState] START_FROM_CACHE", {
+        cachedExtendedTimeframes: cachedExtended,
+        filteredQueue,
+      });
+
+      // Determine currentlyFetching based on phase and remaining queue
+      let currentlyFetching: Timeframe | null = null;
+      if (phase === "loading_7d") {
+        currentlyFetching = "7D";
+      } else if (phase === "7d_loaded") {
+        currentlyFetching = "30D";
+      } else if (phase === "30d_loaded") {
+        // Only set currentlyFetching if there are items to fetch
+        currentlyFetching = filteredQueue[0] || null;
+      }
+
+      // If all extended timeframes are cached, mark as complete
+      const finalPhase = phase === "30d_loaded" && filteredQueue.length === 0 ? "complete" : phase;
+
       return {
         ...state,
-        phase,
+        phase: finalPhase,
         daysLoaded: action.daysLoaded,
         hasCacheHit: true,
         has14DayMilestone: action.daysLoaded >= 14,
-        currentlyFetching: phase === "loading_7d" ? "7D" : phase === "7d_loaded" ? "30D" : "3M",
-        extendedQueue: phase === "30d_loaded" ? ["3M", "6M", "1Y"] : [],
+        currentlyFetching,
+        extendedQueue: phase === "30d_loaded" ? filteredQueue : [],
       };
+    }
 
     case "7D_LOADED":
       return {
@@ -75,10 +100,10 @@ function loadingReducer(state: LoadingState, action: LoadingAction): LoadingStat
       };
 
     case "30D_LOADED":
-      // Safety net: do not overwrite state if we are already past initial load
-      // (e.g. extended fetch in progress or complete). Prevents stray on30DLoaded
-      // from resetting loading icon and breaking 1Y fetch.
-      if (state.phase === "loading_extended" || state.phase === "complete") {
+      // Safety net: do not overwrite state if we are already at or past 30d_loaded.
+      // This prevents stray on30DLoaded calls (e.g., from cache hit triggering milestone)
+      // from resetting the extendedQueue that was already filtered by startFromCache.
+      if (state.phase === "30d_loaded" || state.phase === "loading_extended" || state.phase === "complete") {
         return state;
       }
       console.log("[LoadingState] 30D_LOADED - transitioning to 30d_loaded phase");
@@ -144,7 +169,8 @@ export function useLoadingState() {
   const reset = useCallback(() => dispatch({ type: "RESET" }), []);
   const startFresh = useCallback(() => dispatch({ type: "START_FRESH" }), []);
   const startFromCache = useCallback(
-    (daysLoaded: number) => dispatch({ type: "START_FROM_CACHE", daysLoaded }),
+    (daysLoaded: number, cachedExtendedTimeframes?: ("3M" | "6M" | "1Y")[]) =>
+      dispatch({ type: "START_FROM_CACHE", daysLoaded, cachedExtendedTimeframes }),
     []
   );
   const on7DLoaded = useCallback(
