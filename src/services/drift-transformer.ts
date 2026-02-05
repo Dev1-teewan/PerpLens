@@ -53,11 +53,24 @@ function formatLocalHourKey(timestamp: number): string {
 }
 
 /**
+ * Get today's date string in YYYY-MM-DD format
+ */
+function getTodayDateString(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = (now.getMonth() + 1).toString().padStart(2, '0');
+  const day = now.getDate().toString().padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
  * Get oracle price for a specific date from candle data
+ * Falls back to currentPrice for today's date if no candle is available
  */
 function getOraclePriceForDate(
   candles: DailyCandleRecord[],
-  dateStr: string
+  dateStr: string,
+  currentPrice?: number | null
 ): number | null {
   // Convert dateStr (YYYY-MM-DD) to start of day timestamp
   const [year, month, day] = dateStr.split("-").map(Number);
@@ -66,7 +79,17 @@ function getOraclePriceForDate(
 
   // Find candle that falls within this day
   const candle = candles.find((c) => c.ts >= dateStart && c.ts < dateEnd);
-  return candle ? candle.oracleClose : null;
+
+  if (candle) {
+    return candle.oracleClose;
+  }
+
+  // For today's date, use current price as fallback if no daily candle yet
+  if (currentPrice && dateStr === getTodayDateString()) {
+    return currentPrice;
+  }
+
+  return null;
 }
 
 /**
@@ -112,12 +135,14 @@ function getOraclePriceForHour(
 /**
  * Transform Drift API funding payment records into our StrategyResponse format
  * Optional candleData parameter enables notional/APY enrichment for daily metrics
+ * Optional currentPrices parameter provides fallback prices for today's date
  */
 export function transformDriftDataToStrategy(
   userAddress: string,
   records: DriftFundingPaymentRecord[],
   timeframe: Timeframe = "7D",
-  candleData?: Map<string, DailyCandleRecord[]>
+  candleData?: Map<string, DailyCandleRecord[]>,
+  currentPrices?: Map<string, number>
 ): StrategyResponse {
   if (records.length === 0) {
     // Return empty strategy if no records
@@ -347,7 +372,8 @@ export function transformDriftDataToStrategy(
           const marketName = getMarketName(marketIndex);
           const baseAsset = dailyAgg.perMarketBaseAsset.get(marketIndex) || 0;
           const candles = candleData.get(marketName);
-          const price = candles ? getOraclePriceForDate(candles, date) : null;
+          const currentPrice = currentPrices?.get(marketName) ?? null;
+          const price = candles ? getOraclePriceForDate(candles, date, currentPrice) : currentPrice;
 
           if (price !== null && baseAsset > 0) {
             const notional = baseAsset * price;

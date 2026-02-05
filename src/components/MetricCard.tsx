@@ -2,9 +2,9 @@ import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 
 interface MetricCardProps {
-  label: string;
+  label: React.ReactNode;
   value: string;
-  subValue?: string;
+  subValue?: React.ReactNode;
   trend?: "up" | "down" | "neutral";
   icon?: React.ReactNode;
   delay?: number;

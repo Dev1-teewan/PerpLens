@@ -1,10 +1,16 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useStrategy, type Timeframe } from "@/hooks/use-strategies";
 import { useUserState } from "@/hooks/use-user-state";
 import { MetricCard } from "@/components/MetricCard";
 import { PnLCharts } from "@/components/PnLCharts";
 import { PositionsTable } from "@/components/PositionsTable";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   Loader2,
   Search,
@@ -18,6 +24,8 @@ import {
   Trash2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+
+type ApyMethod = "average" | "capital-weighted";
 
 const SEARCH_HISTORY_KEY = "drift:search-history";
 const MAX_HISTORY_ITEMS = 10;
@@ -105,6 +113,7 @@ export default function Home() {
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
+  const [apyMethod, setApyMethod] = useState<ApyMethod>("average");
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -147,6 +156,86 @@ export default function Home() {
   }, [cacheSuggestedDefaultTimeframe]);
 
   const { userState } = useUserState(walletKey);
+
+  // Calculate APY based on selected method
+  const calculatedApy = useMemo(() => {
+    if (!data?.dailyMetrics || data.dailyMetrics.length === 0) {
+      return { average: null, capitalWeighted: null, previousAverage: null, previousCapWeighted: null };
+    }
+
+    // Filter metrics that have both PnL and notional values
+    const metricsWithNotional = data.dailyMetrics.filter(
+      (m) => m.notionalValue && parseFloat(m.notionalValue) > 0
+    );
+
+    if (metricsWithNotional.length === 0) {
+      const fallbackApy = data.currentApy ? parseFloat(data.currentApy) : null;
+      return { average: fallbackApy, capitalWeighted: fallbackApy, previousAverage: null, previousCapWeighted: null };
+    }
+
+    const N = metricsWithNotional.length;
+    const isHourly = timeframe === '24H';
+    const periodsPerYear = isHourly ? 24 * 365 : 365;
+
+    // Case A: Average Daily APY = (1/N) * Σ(pᵢ/nᵢ) * periodsPerYear
+    let sumPeriodRoi = 0;
+    for (const m of metricsWithNotional) {
+      const pnl = parseFloat(m.dailyPnl);
+      const notional = parseFloat(m.notionalValue!);
+      sumPeriodRoi += (pnl / notional) * 100;
+    }
+    const avgPeriodRoi = sumPeriodRoi / N;
+    const averageApy = avgPeriodRoi * periodsPerYear;
+
+    // Case B: Capital-Weighted APY = [Σpᵢ / Σnᵢ] * periodsPerYear
+    let totalPnl = 0;
+    let totalNotional = 0;
+    for (const m of metricsWithNotional) {
+      totalPnl += parseFloat(m.dailyPnl);
+      totalNotional += parseFloat(m.notionalValue!);
+    }
+    const periodRoiWeighted = totalNotional > 0 ? (totalPnl / totalNotional) * 100 : 0;
+    const capitalWeightedApy = periodRoiWeighted * periodsPerYear;
+
+    // Calculate previous period APY for comparison (first half vs second half)
+    let previousAverage: number | null = null;
+    let previousCapWeighted: number | null = null;
+
+    if (N >= 4) {
+      const halfN = Math.floor(N / 2);
+      const firstHalf = metricsWithNotional.slice(0, halfN);
+
+      // Previous period (first half) - Average
+      let prevSumRoi = 0;
+      for (const m of firstHalf) {
+        const pnl = parseFloat(m.dailyPnl);
+        const notional = parseFloat(m.notionalValue!);
+        prevSumRoi += (pnl / notional) * 100;
+      }
+      previousAverage = (prevSumRoi / firstHalf.length) * periodsPerYear;
+
+      // Previous period (first half) - Capital Weighted
+      let prevTotalPnl = 0;
+      let prevTotalNotional = 0;
+      for (const m of firstHalf) {
+        prevTotalPnl += parseFloat(m.dailyPnl);
+        prevTotalNotional += parseFloat(m.notionalValue!);
+      }
+      previousCapWeighted = prevTotalNotional > 0
+        ? ((prevTotalPnl / prevTotalNotional) * 100) * periodsPerYear
+        : null;
+    }
+
+    return { average: averageApy, capitalWeighted: capitalWeightedApy, previousAverage, previousCapWeighted };
+  }, [data?.dailyMetrics, data?.currentApy, timeframe]);
+
+  // Select APY based on method
+  const { displayApy, apyChange } = useMemo(() => {
+    const current = apyMethod === "average" ? calculatedApy.average : calculatedApy.capitalWeighted;
+    const previous = apyMethod === "average" ? calculatedApy.previousAverage : calculatedApy.previousCapWeighted;
+    const change = current !== null && previous !== null ? current - previous : null;
+    return { displayApy: current, apyChange: change };
+  }, [apyMethod, calculatedApy]);
 
   // Load search history on mount
   useEffect(() => {
@@ -562,15 +651,99 @@ export default function Home() {
               );
             })()}
             <MetricCard
-              label="Current APY"
+              label={
+                <TooltipProvider delayDuration={100}>
+                  <div className="flex items-center gap-2">
+                    <span>APY</span>
+                    <div className="flex items-center text-[10px] gap-0.5">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setApyMethod("average");
+                            }}
+                            className={`px-1.5 py-0.5 rounded transition-all ${
+                              apyMethod === "average"
+                                ? "bg-emerald-900/60 text-emerald-400"
+                                : "text-muted-foreground/40 hover:text-muted-foreground/70"
+                            }`}
+                          >
+                            Avg
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-[200px]">
+                          <p className="font-semibold">Daily Average APY</p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Formula: (1/N) × Σ(pᵢ/nᵢ) × 365
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Averages each day's ROI equally, then annualizes.
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setApyMethod("capital-weighted");
+                            }}
+                            className={`px-1.5 py-0.5 rounded transition-all ${
+                              apyMethod === "capital-weighted"
+                                ? "bg-emerald-900/60 text-emerald-400"
+                                : "text-muted-foreground/40 hover:text-muted-foreground/70"
+                            }`}
+                          >
+                            Cap
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-[200px]">
+                          <p className="font-semibold">Capital-Weighted APY</p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Formula: (Σpᵢ / Σnᵢ) × 365
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Weights performance by deployed capital.
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                  </div>
+                </TooltipProvider>
+              }
               value={
-                data.currentApy && Number(data.currentApy) > 0
-                  ? `${Number(data.currentApy).toFixed(2)}%`
+                displayApy !== null && !isNaN(displayApy)
+                  ? `${displayApy.toFixed(2)}%`
                   : "—"
               }
-              subValue="Annualized return"
+              subValue={
+                apyChange !== null ? (
+                  <span
+                    className={`flex items-center gap-1 ${
+                      apyChange > 0
+                        ? "text-primary"
+                        : apyChange < 0
+                        ? "text-destructive"
+                        : "text-muted-foreground"
+                    }`}
+                  >
+                    {apyChange > 0 ? "▲" : apyChange < 0 ? "▼" : "–"}{" "}
+                    {apyChange >= 0 ? "+" : ""}
+                    {apyChange.toFixed(1)}% vs prev
+                  </span>
+                ) : (
+                  "Annualized return"
+                )
+              }
               trend={
-                data.currentApy && Number(data.currentApy) > 0
+                apyChange !== null
+                  ? apyChange > 0
+                    ? "up"
+                    : apyChange < 0
+                    ? "down"
+                    : "neutral"
+                  : displayApy !== null && displayApy > 0
                   ? "up"
                   : "neutral"
               }

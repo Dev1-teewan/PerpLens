@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   fetchMultipleDailyCandles,
   fetchMultipleHourlyCandles,
+  fetchMultipleMarketPrices,
 } from "@/services/drift-api";
 import { transformDriftDataToStrategy } from "@/services/drift-transformer";
 import { mockStrategy } from "@/mock-strategy";
@@ -142,6 +143,9 @@ export function useStrategy(
   const [candleData, setCandleData] = useState<
     Map<string, DailyCandleRecord[]>
   >(new Map());
+  const [currentPrices, setCurrentPrices] = useState<Map<string, number>>(
+    new Map()
+  );
   const [fetchedTimeframes, setFetchedTimeframes] = useState<Set<Timeframe>>(
     new Set()
   );
@@ -186,9 +190,10 @@ export function useStrategy(
       walletSubkey,
       filteredRecords,
       timeframe,
-      candleData
+      candleData,
+      currentPrices
     );
-  }, [walletSubkey, timeframe, allRecords, candleData]);
+  }, [walletSubkey, timeframe, allRecords, candleData, currentPrices]);
 
   // Price enrichment for non-mock data
   const { enrichedData } = usePriceEnrichment(
@@ -203,6 +208,7 @@ export function useStrategy(
       setAllRecords([]);
       setFetchedTimeframes(new Set());
       setCandleData(new Map());
+      setCurrentPrices(new Map());
       setProbeSuggestedTimeframe(null);
       setCacheSuggestedDefaultTimeframe(null);
       setLoadingProgress(null);
@@ -256,8 +262,16 @@ export function useStrategy(
       return;
     }
 
-    // Run initial 30-day fetch only once per wallet; prevents repeated 30d milestone
+    // Run initial 30-day fetch only once per wallet; prevents repeated 30d milestone.
+    // When user switches 7D <-> 30D after load, sync allRecords from cache for current
+    // short timeframe so the UI updates without refetch.
     if (!isExtendedTimeframe(timeframe) && initialFetchDoneRef.current) {
+      const cacheState = getCacheState(walletSubkey);
+      if (cacheState.hasCache && cacheState.daysCovered >= 7) {
+        const days = getTimeframeDays(timeframe);
+        const cachedRecords = getCachedRecords(walletSubkey, days);
+        setAllRecords(cachedRecords);
+      }
       return;
     }
 
@@ -292,9 +306,13 @@ export function useStrategy(
       }
 
       // If all extended timeframes are cached, check if we need to fetch recent records
+      // Use 30 days so that both 7D and 30D views work when user switches timeframe
+      // without re-running the fetch (initialFetchDoneRef prevents re-run)
       if (filteredQueue.length === 0) {
-        const days = getTimeframeDays(timeframe);
-        const cachedRecords = getCachedRecords(walletSubkey, days);
+        const cachedRecords = getCachedRecords(
+          walletSubkey,
+          Math.max(30, getTimeframeDays(timeframe))
+        );
         setAllRecords(cachedRecords);
         initialFetchDoneRef.current = true;
 
@@ -569,16 +587,18 @@ export function useStrategy(
     setError,
   ]);
 
-  // Fetch candle data for heatmap
+  // Fetch candle data for heatmap and current prices for today's fallback
   useEffect(() => {
     if (walletSubkey === "main-account" || allRecords.length === 0) {
       setCandleData(new Map());
+      setCurrentPrices(new Map());
       return;
     }
 
     const filteredRecords = filterRecordsByTimeframe(allRecords, timeframe);
     if (filteredRecords.length === 0) {
       setCandleData(new Map());
+      setCurrentPrices(new Map());
       return;
     }
 
@@ -590,6 +610,13 @@ export function useStrategy(
     const symbols = [...symbolsSet];
 
     let cancelled = false;
+
+    // Fetch current prices for today's notional fallback
+    fetchMultipleMarketPrices(symbols)
+      .then((prices) => {
+        if (!cancelled) setCurrentPrices(prices);
+      })
+      .catch(console.error);
 
     if (timeframe === "24H") {
       // Fetch hourly candles for 24H timeframe
@@ -626,6 +653,7 @@ export function useStrategy(
     clearCurrentMonthFundingCache(walletSubkey);
     setAllRecords([]);
     setCandleData(new Map());
+    setCurrentPrices(new Map());
     reset();
   }, [walletSubkey, timeframe, reset]);
 
