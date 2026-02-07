@@ -1,4 +1,4 @@
-import { AreaChart, Area, ResponsiveContainer, YAxis } from "recharts";
+import { AreaChart, Area, ResponsiveContainer, YAxis, ReferenceLine } from "recharts";
 
 interface SparklineProps {
   data: { value: number }[];
@@ -47,6 +47,9 @@ export function Sparkline({
               domain={["dataMin", "dataMax"]}
               hide
             />
+          )}
+          {data.some(d => d.value < 0) && (
+            <ReferenceLine y={0} stroke="#52525b" strokeDasharray="3 3" strokeWidth={0.5} />
           )}
           <Area
             type="monotone"

@@ -12,6 +12,14 @@ export interface Strategy {
   updatedAt?: string | Date;
 }
 
+export interface DailyMarketBreakdown {
+  marketIndex: number;
+  marketName: string;
+  dailyFunding: number;
+  notionalValue: number;
+  apy: number;
+}
+
 export interface DailyMetric {
   id: number;
   strategyId: number;
@@ -19,21 +27,29 @@ export interface DailyMetric {
   dailyPnl: string;
   dailyFunding: string;
   cumulativePnl: string;
+  notionalValue?: string;
+  portfolioApy?: string;
+  perMarketBreakdown?: DailyMarketBreakdown[];
 }
+
+export type StrategySide = "Short Perp + Long Spot" | "Long Perp + Short Spot";
 
 export interface Position {
   id: number;
   strategyId: number;
   pairName: string;
   hedgeType: string;
-  notionalSize: string;
+  strategySide: StrategySide;
+  notionalSize: string;         // Token amount
+  notionalValue: string;        // Token amount × current price (USD)
   netPnl: string;
   fundingEarned: string;
   roi: string;
   status: string;
   longEntryPrice: string;
   shortEntryPrice: string;
-  currentPrice: string;
+  currentPrice: string;         // From candles API
+  marketDailyMetrics?: DailyMetric[];  // Per-market PnL history for sparkline
 }
 
 export interface StrategyResponse extends Strategy {

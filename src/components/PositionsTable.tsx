@@ -12,29 +12,21 @@ import { Badge } from "@/components/ui/badge";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
+import { getDriftIconUrl } from "@/lib/drift-icons";
+import { useTableControls } from "@/hooks/use-table-controls";
+import { SortableHeader } from "@/components/SortableHeader";
 import { Sparkline } from "@/components/Sparkline";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine
 } from "recharts";
 
-const DRIFT_LOGO_BASE = "https://drift-public.s3.eu-central-1.amazonaws.com/assets/icons/markets";
+type PositionSortKey = "notional" | "fundingPnl" | "roi";
 
-/** Symbols that use .webp on Drift; all others use .svg (previous behavior). */
-const WEBP_SYMBOLS = new Set(["wif", "bonk"]);
-
-/** Drift market icon URL: 1m/1k prefix stripped and .webp for those + wif/bonk; other symbols use .svg as before. */
-function marketIconUrl(pairName: string): string {
-  const symbol = pairName.split("-")[0].toLowerCase();
-  let fileSymbol = symbol;
-  let ext: "webp" | "svg" = "svg";
-  if (symbol.startsWith("1m") || symbol.startsWith("1k")) {
-    fileSymbol = symbol.slice(2);
-    ext = "webp";
-  } else if (WEBP_SYMBOLS.has(symbol)) {
-    ext = "webp";
-  }
-  return `${DRIFT_LOGO_BASE}/${fileSymbol}.${ext}`;
-}
+const positionExtractors: Record<PositionSortKey, (p: Position) => number> = {
+  notional: (p) => Number(p.notionalValue) || 0,
+  fundingPnl: (p) => Number(p.fundingEarned) || 0,
+  roi: (p) => Number(p.roi) || 0,
+};
 
 interface PositionRowProps {
   pos: Position;
@@ -115,7 +107,7 @@ function PositionRow({ pos, isExpanded, onToggle, formatCurrency, formatPercent,
           <div className="flex items-center gap-2">
             <div className="relative w-8 h-8 rounded-full bg-muted/50 flex items-center justify-center shrink-0 overflow-hidden">
               <img
-                src={marketIconUrl(pos.pairName)}
+                src={getDriftIconUrl(pos.pairName)}
                 alt=""
                 className="w-full h-full object-contain"
                 onError={(e) => {
@@ -134,8 +126,16 @@ function PositionRow({ pos, isExpanded, onToggle, formatCurrency, formatPercent,
           </div>
         </TableCell>
         <TableCell>
-          <Badge variant="secondary" className="font-normal text-xs bg-muted text-muted-foreground border-border">
-            {pos.hedgeType}
+          <Badge
+            variant="secondary"
+            className={cn(
+              "font-normal text-xs border",
+              pos.strategySide === "Short Perp + Long Spot"
+                ? "bg-emerald-900/40 text-emerald-400 border-emerald-600/30"
+                : "bg-indigo-900/40 text-indigo-400 border-indigo-600/30"
+            )}
+          >
+            {pos.strategySide}
           </Badge>
         </TableCell>
         <TableCell className="text-right font-mono text-muted-foreground">
@@ -269,14 +269,12 @@ interface PositionsTableProps {
 export function PositionsTable({ positions }: PositionsTableProps) {
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
 
-  // Sort positions by notional value (highest first)
-  const sortedPositions = useMemo(() => {
-    return [...positions].sort((a, b) => {
-      const aNotional = Number(a.notionalValue) || 0;
-      const bNotional = Number(b.notionalValue) || 0;
-      return bNotional - aNotional;
-    });
-  }, [positions]);
+  const { sortConfig, toggleSort, processedItems: sortedPositions } = useTableControls<Position, PositionSortKey>({
+    items: positions,
+    defaultSortKey: "notional",
+    defaultDirection: "desc",
+    valueExtractors: positionExtractors,
+  });
 
   const toggleRow = (id: number) => {
     const newExpanded = new Set(expandedRows);
@@ -324,10 +322,31 @@ export function PositionsTable({ positions }: PositionsTableProps) {
           <TableRow className="hover:bg-transparent border-border">
             <TableHead className="w-[50px]"></TableHead>
             <TableHead className="font-semibold text-muted-foreground text-xs uppercase tracking-wider">Pair</TableHead>
-            <TableHead className="font-semibold text-muted-foreground text-xs uppercase tracking-wider">Type</TableHead>
-            <TableHead className="text-right font-semibold text-muted-foreground text-xs uppercase tracking-wider">Notional</TableHead>
-            <TableHead className="text-right font-semibold text-muted-foreground text-xs uppercase tracking-wider">Funding PnL</TableHead>
-            <TableHead className="text-right font-semibold text-muted-foreground text-xs uppercase tracking-wider">ROI</TableHead>
+            <TableHead className="font-semibold text-muted-foreground text-xs uppercase tracking-wider">Strategy Side</TableHead>
+            <SortableHeader<PositionSortKey>
+              label="Notional"
+              sortKey="notional"
+              activeSortKey={sortConfig.key}
+              activeDirection={sortConfig.direction}
+              onSort={toggleSort}
+              align="right"
+            />
+            <SortableHeader<PositionSortKey>
+              label="Funding PnL"
+              sortKey="fundingPnl"
+              activeSortKey={sortConfig.key}
+              activeDirection={sortConfig.direction}
+              onSort={toggleSort}
+              align="right"
+            />
+            <SortableHeader<PositionSortKey>
+              label="ROI"
+              sortKey="roi"
+              activeSortKey={sortConfig.key}
+              activeDirection={sortConfig.direction}
+              onSort={toggleSort}
+              align="right"
+            />
             <TableHead className="text-center font-semibold text-muted-foreground text-xs uppercase tracking-wider w-[100px]">Trend</TableHead>
           </TableRow>
         </TableHeader>

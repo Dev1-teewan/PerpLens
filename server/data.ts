@@ -1,5 +1,5 @@
 import { subDays } from "date-fns";
-import type { StrategyResponse, Strategy, DailyMetric, Position } from "@shared/schema";
+import type { StrategyResponse, Strategy, DailyMetric, Position } from "../shared/schema";
 
 const mainStrategy: Strategy = {
   id: 1,
@@ -35,7 +35,9 @@ const mainPositions: Position[] = [
     id: 1,
     strategyId: 1,
     pairName: "SOL-PERP",
+    strategySide: "Short Perp + Long Spot",
     notionalSize: "85000.00",
+    notionalValue: "85000.00",
     netPnl: "4200.50",
     fundingEarned: "4500.00",
     roi: "12.5",
@@ -49,7 +51,9 @@ const mainPositions: Position[] = [
     id: 2,
     strategyId: 1,
     pairName: "BTC-PERP",
+    strategySide: "Short Perp + Long Spot",
     notionalSize: "120000.00",
+    notionalValue: "120000.00",
     netPnl: "7800.20",
     fundingEarned: "8100.00",
     roi: "8.2",
@@ -63,7 +67,9 @@ const mainPositions: Position[] = [
     id: 3,
     strategyId: 1,
     pairName: "ETH-PERP",
+    strategySide: "Short Perp + Long Spot",
     notionalSize: "45000.00",
+    notionalValue: "45000.00",
     netPnl: "450.10",
     fundingEarned: "500.00",
     roi: "4.1",

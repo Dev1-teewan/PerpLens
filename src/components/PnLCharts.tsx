@@ -513,14 +513,14 @@ export function PnLCharts({ data, timeframe = "7D" }: PnLChartsProps) {
                         className={`min-h-[5rem] rounded-lg flex flex-col items-center justify-center p-2 border transition-all hover:scale-[1.02] cursor-pointer ${
                           isPositive
                             ? "bg-primary/15 border-primary/30 hover:bg-primary/25"
-                            : "bg-destructive/15 border-destructive/30 hover:bg-destructive/25"
+                            : "bg-red-500/10 border-red-400/20 hover:bg-red-500/15"
                         }`}
                       >
                         <span className="text-[10px] text-foreground/70 font-medium">
                           {day.formattedDate}
                         </span>
                         <span
-                          className={`text-sm font-bold tabular-nums ${isPositive ? "text-primary" : "text-destructive"}`}
+                          className={`text-sm font-bold tabular-nums ${isPositive ? "text-primary" : "text-red-400/90"}`}
                         >
                           {isPositive ? "+" : ""}
                           {pnl.toFixed(2)}
@@ -535,7 +535,7 @@ export function PnLCharts({ data, timeframe = "7D" }: PnLChartsProps) {
                         )}
                         {apy !== null && (
                           <span
-                            className={`text-[9px] tabular-nums ${apy >= 0 ? "text-primary/80" : "text-destructive/80"}`}
+                            className={`text-[9px] tabular-nums ${apy >= 0 ? "text-primary/80" : "text-red-400/70"}`}
                           >
                             {apy >= 0 ? "+" : ""}
                             {apy.toFixed(1)}% APY

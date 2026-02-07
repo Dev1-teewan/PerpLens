@@ -1,5 +1,5 @@
 import type { DriftFundingPaymentRecord, DailyCandleRecord } from "./drift-types";
-import type { StrategyResponse, DailyMetric, Position, DailyMarketBreakdown } from "../types/schema";
+import type { StrategyResponse, DailyMetric, Position, DailyMarketBreakdown, StrategySide } from "../types/schema";
 import { getMarketName } from "./drift-types";
 
 export type Timeframe = "24H" | "7D" | "30D" | "3M" | "6M" | "1Y";
@@ -197,8 +197,12 @@ export function transformDriftDataToStrategy(
   // 2. Create positions from market aggregations
   const positions: Position[] = Array.from(marketMap.values()).map(
     (marketAgg, index) => {
-      const baseAsset = Math.abs(parseFloat(marketAgg.latestBaseAssetAmount));
+      const rawBaseAsset = parseFloat(marketAgg.latestBaseAssetAmount);
+      const baseAsset = Math.abs(rawBaseAsset);
       const fundingEarned = marketAgg.totalFunding;
+      const strategySide: StrategySide = rawBaseAsset < 0
+        ? "Short Perp + Long Spot"
+        : "Long Perp + Short Spot";
 
       // Build per-market daily metrics for sparkline
       const sortedDays = Array.from(marketAgg.dailyFunding.entries())
@@ -222,6 +226,7 @@ export function transformDriftDataToStrategy(
         strategyId: 1,
         pairName: getMarketName(marketAgg.marketIndex),
         hedgeType: "Cash & Carry",
+        strategySide,
         notionalSize: baseAsset.toFixed(2),
         notionalValue: "0.00", // Will be calculated in useStrategy after fetching prices
         netPnl: fundingEarned.toFixed(2),

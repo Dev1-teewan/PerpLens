@@ -22,7 +22,9 @@ import {
   X,
   Clock,
   Trash2,
+  Lightbulb,
 } from "lucide-react";
+import { Link } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 
 type ApyMethod = "average" | "capital-weighted";
@@ -349,145 +351,6 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-background text-foreground pb-20">
-      {/* Header */}
-      <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-md border-b border-border">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <img
-              src="/logo.png"
-              alt="PerpLens"
-              className="w-16 h-16 object-contain"
-            />
-            <div>
-              <h1 className="text-2xl font-display font-bold tracking-tight">
-                Perp<span className="text-primary">Lens</span>
-              </h1>
-              <p className="text-xs text-muted-foreground font-mono tracking-widest">
-                FUNDING STRATEGIES MONITOR
-              </p>
-            </div>
-          </div>
-
-          <div
-            className="hidden md:flex items-center gap-2 relative"
-            ref={dropdownRef}
-          >
-            <div className="flex items-center gap-3 bg-card border border-border rounded-full p-1 pl-4">
-              <Search className="w-4 h-4 text-muted-foreground" />
-              <form onSubmit={handleSearch}>
-                <input
-                  ref={inputRef}
-                  className="bg-transparent border-none focus:outline-none text-sm w-64 text-foreground placeholder:text-muted-foreground/50"
-                  placeholder="Enter Wallet Subkey..."
-                  value={inputValue}
-                  onFocus={handleInputFocus}
-                  onChange={(e) => {
-                    setInputValue(e.target.value);
-                    setShowDropdown(true);
-                    setSelectedIndex(-1);
-                  }}
-                  onKeyDown={handleKeyDown}
-                  autoComplete="off"
-                />
-              </form>
-              <Button
-                size="sm"
-                className="rounded-full bg-primary text-primary-foreground hover:bg-primary/90 px-6 font-semibold shadow-[0_0_20px_-5px_rgba(39,211,136,0.4)] transition-all"
-                onClick={handleSearch}
-                disabled={isLoading || isRefetching}
-              >
-                {isRefetching ? (
-                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                ) : null}
-                Load Strategy
-              </Button>
-            </div>
-
-            {/* Custom Dropdown */}
-            <AnimatePresence>
-              {showDropdown && filteredHistory.length > 0 && (
-                <motion.div
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  transition={{ duration: 0.15 }}
-                  className="absolute top-full left-0 mt-2 w-full min-w-[400px] bg-card border border-border rounded-xl shadow-xl shadow-black/30 overflow-hidden z-50"
-                >
-                  <div className="p-2 border-b border-border/50">
-                    <p className="text-xs text-muted-foreground font-medium px-2">
-                      Recent Searches
-                    </p>
-                  </div>
-                  <div className="max-h-[280px] overflow-y-auto">
-                    {filteredHistory.map((address, index) => (
-                      <div
-                        key={address}
-                        onClick={() => handleSelectHistory(address)}
-                        className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors group ${
-                          index === selectedIndex
-                            ? "bg-primary/10 text-foreground"
-                            : "hover:bg-muted/50 text-muted-foreground hover:text-foreground"
-                        }`}
-                      >
-                        <Clock className="w-4 h-4 shrink-0 opacity-50" />
-                        <span className="flex-1 text-sm font-mono truncate">
-                          {address}
-                        </span>
-                        <button
-                          onClick={(e) => removeFromHistory(address, e)}
-                          className="opacity-0 group-hover:opacity-100 p-1 hover:bg-destructive/20 rounded transition-all"
-                          title="Remove from history"
-                        >
-                          <Trash2 className="w-3.5 h-3.5 text-destructive" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <div className="hidden sm:flex bg-muted rounded-lg p-1 items-center gap-1">
-              {(["24H", "7D", "30D", "3M", "6M", "1Y"] as Timeframe[]).map(
-                (tf) => {
-                  const isCurrentlyLoading = currentlyLoadingTimeframes.has(tf);
-                  const isDisabled = disabledTimeframes.has(tf);
-
-                  return (
-                    <button
-                      key={tf}
-                      onClick={() => setTimeframe(tf)}
-                      disabled={isDisabled}
-                      className={`px-3 py-1 text-xs font-medium rounded-md transition-all flex items-center gap-1 ${
-                        timeframe === tf
-                          ? "bg-background text-foreground shadow-sm"
-                          : isDisabled
-                          ? "text-muted-foreground/40 cursor-not-allowed"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      {tf}
-                      {isCurrentlyLoading && (
-                        <Loader2 className="w-3 h-3 animate-spin shrink-0" />
-                      )}
-                    </button>
-                  );
-                }
-              )}
-            </div>
-            {loadingProgress && loadingProgress.phase !== "complete" && (
-              <span className="text-xs text-muted-foreground">
-                {loadingProgress.phase === "cache"
-                  ? "Loading cache..."
-                  : `${loadingProgress.loadedMonths}/${loadingProgress.totalMonths} months`}
-              </span>
-            )}
-          </div>
-        </div>
-      </header>
-
       {/* Error Dialog Popup */}
       <AnimatePresence>
         {showErrorDialog && isError && (
@@ -553,49 +416,171 @@ export default function Home() {
         )}
       </AnimatePresence>
 
-      {isLoading ? (
-        <div className="flex flex-col items-center justify-center min-h-[60vh]">
-          <div className="relative">
-            <div className="w-16 h-16 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
-            <div className="absolute top-0 left-0 w-16 h-16 border-4 border-transparent border-b-accent/50 rounded-full animate-spin [animation-duration:1.5s]" />
-          </div>
-          <p className="mt-4 text-muted-foreground animate-pulse">
-            Synchronizing on-chain data...
-          </p>
-        </div>
-      ) : data ? (
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-          {/* Top Section - Status & Last Updated */}
-          <div className="flex justify-between items-end">
-            <div>
-              <h2 className="text-3xl font-bold mb-1">Portfolio Snapshot</h2>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+        {/* Row 1: Header & Status */}
+        <div className="flex justify-between items-baseline mb-4">
+          <h2 className="text-3xl font-bold">Portfolio Snapshot</h2>
+          {data && (
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1.5">
                 <span
-                  className={`w-2 h-2 rounded-full ${
+                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                     currentlyLoadingTimeframe ? "bg-yellow-400" : "bg-primary"
                   } animate-pulse`}
                 />
                 {currentlyLoadingTimeframe
                   ? `Loading ${currentlyLoadingTimeframe} data...`
-                  : "Live Connection"}
-                <span className="mx-2 text-border">|</span>
-                Last updated:{" "}
+                  : "Live"}
+              </span>
+              <span aria-hidden>•</span>
+              <span>
+                Updated:{" "}
                 {new Date(data.updatedAt || new Date()).toLocaleTimeString()}
-                <span className="mx-2 text-border">|</span>
-                Viewing: {timeframe}
-              </div>
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Row 2: Controls Toolbar */}
+        <div className="flex justify-between items-center mb-6" ref={dropdownRef}>
+          <div className="relative flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground">
+              Drift PubKey
+            </label>
+            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 h-10 w-[400px] rounded-lg px-3 ring-1 ring-white/5 bg-secondary/20">
+              <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+              <form onSubmit={handleSearch} className="flex-1 min-w-0">
+                <input
+                  ref={inputRef}
+                  className="bg-transparent border-none focus:outline-none text-sm w-full h-full text-foreground placeholder:text-muted-foreground/50 py-2"
+                  placeholder="Enter Drift PubKey / Authority..."
+                  value={inputValue}
+                  onFocus={handleInputFocus}
+                  onChange={(e) => {
+                    setInputValue(e.target.value);
+                    setShowDropdown(true);
+                    setSelectedIndex(-1);
+                  }}
+                  onKeyDown={handleKeyDown}
+                  autoComplete="off"
+                />
+              </form>
             </div>
             <Button
-              variant="outline"
+              size="sm"
+              className="h-10 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 px-6 font-semibold shadow-[0_0_20px_-5px_rgba(39,211,136,0.4)] transition-all shrink-0"
+              onClick={handleSearch}
+              disabled={isLoading || isRefetching}
+            >
+              {isRefetching ? (
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+              ) : null}
+              Load Strategy
+            </Button>
+            <AnimatePresence>
+              {showDropdown && filteredHistory.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  transition={{ duration: 0.15 }}
+                  className="absolute top-full left-0 mt-2 w-full min-w-[320px] max-w-[24rem] bg-card border border-border rounded-xl shadow-xl shadow-black/30 overflow-hidden z-50"
+                >
+                  <div className="p-2 border-b border-border/50">
+                    <p className="text-xs text-muted-foreground font-medium px-2">
+                      Recent Searches
+                    </p>
+                  </div>
+                  <div className="max-h-[280px] overflow-y-auto">
+                    {filteredHistory.map((address, index) => (
+                      <div
+                        key={address}
+                        onClick={() => handleSelectHistory(address)}
+                        className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors group ${
+                          index === selectedIndex
+                            ? "bg-primary/10 text-foreground"
+                            : "hover:bg-muted/50 text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        <Clock className="w-4 h-4 shrink-0 opacity-50" />
+                        <span className="flex-1 text-sm font-mono truncate">
+                          {address}
+                        </span>
+                        <button
+                          onClick={(e) => removeFromHistory(address, e)}
+                          className="opacity-0 group-hover:opacity-100 p-1 hover:bg-destructive/20 rounded transition-all"
+                          title="Remove from history"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-destructive" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            <div className="flex bg-muted rounded-lg p-1 items-center gap-1">
+              {(["24H", "7D", "30D", "3M", "6M", "1Y"] as Timeframe[]).map(
+                (tf) => {
+                  const isCurrentlyLoading = currentlyLoadingTimeframes.has(tf);
+                  const isDisabled = disabledTimeframes.has(tf);
+                  return (
+                    <button
+                      key={tf}
+                      onClick={() => setTimeframe(tf)}
+                      disabled={isDisabled}
+                      className={`px-3 py-1 text-xs font-medium rounded-md transition-all flex items-center gap-1 ${
+                        timeframe === tf
+                          ? "bg-background text-foreground shadow-sm"
+                          : isDisabled
+                            ? "text-muted-foreground/40 cursor-not-allowed"
+                            : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {tf}
+                      {isCurrentlyLoading && (
+                        <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+                      )}
+                    </button>
+                  );
+                }
+              )}
+            </div>
+            <Button
+              variant="ghost"
               size="sm"
               onClick={() => refetch()}
               className="border-border hover:bg-muted text-muted-foreground"
             >
               <RefreshCw className="w-3 h-3 mr-2" />
-              Refresh Data
+              Refresh
             </Button>
+            {loadingProgress && loadingProgress.phase !== "complete" && (
+              <span className="text-xs text-muted-foreground">
+                {loadingProgress.phase === "cache"
+                  ? "Loading cache..."
+                  : `${loadingProgress.loadedMonths}/${loadingProgress.totalMonths} months`}
+              </span>
+            )}
           </div>
+        </div>
 
+        {isLoading ? (
+          <div className="flex flex-col items-center justify-center min-h-[40vh]">
+            <div className="relative">
+              <div className="w-16 h-16 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
+              <div className="absolute top-0 left-0 w-16 h-16 border-4 border-transparent border-b-accent/50 rounded-full animate-spin [animation-duration:1.5s]" />
+            </div>
+            <p className="mt-4 text-muted-foreground animate-pulse">
+              Synchronizing on-chain data...
+            </p>
+          </div>
+        ) : data ? (
+          <>
           {/* Metrics Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             {(() => {
@@ -802,10 +787,10 @@ export default function Home() {
                     <span
                       className={`font-mono font-medium ${
                         userState?.account?.health != null
-                          ? userState.account.health >= 50
+                          ? userState.account.health >= 70
                             ? "text-primary"
-                            : userState.account.health >= 20
-                            ? "text-yellow-400"
+                            : userState.account.health >= 40
+                            ? "text-orange-400"
                             : "text-destructive"
                           : "text-muted-foreground"
                       }`}
@@ -818,19 +803,22 @@ export default function Home() {
                   <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
                     <div
                       className={`h-full rounded-full transition-all ${
-                        userState?.account?.health != null
-                          ? userState.account.health >= 50
-                            ? "bg-primary"
-                            : userState.account.health >= 20
-                            ? "bg-yellow-400"
-                            : "bg-destructive"
-                          : "bg-muted-foreground/30"
+                        userState?.account?.health != null && userState.account.health < 40
+                          ? "animate-pulse"
+                          : ""
                       }`}
                       style={{
                         width: `${Math.min(
                           userState?.account?.health ?? 0,
                           100
                         )}%`,
+                        background: userState?.account?.health != null
+                          ? userState.account.health >= 70
+                            ? "hsl(154,69%,49%)"
+                            : userState.account.health >= 40
+                            ? "hsl(35,92%,50%)"
+                            : "hsl(0,100%,65%)"
+                          : "hsl(var(--muted-foreground) / 0.3)",
                       }}
                     />
                   </div>
@@ -846,7 +834,7 @@ export default function Home() {
                           ? userState.account.leverage <= 3
                             ? "text-primary"
                             : userState.account.leverage <= 5
-                            ? "text-yellow-400"
+                            ? "text-orange-400"
                             : "text-destructive"
                           : "text-muted-foreground"
                       }`}
@@ -858,20 +846,19 @@ export default function Home() {
                   </div>
                   <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
                     <div
-                      className={`h-full rounded-full transition-all ${
-                        userState?.account?.leverage != null
-                          ? userState.account.leverage <= 3
-                            ? "bg-primary"
-                            : userState.account.leverage <= 5
-                            ? "bg-yellow-400"
-                            : "bg-destructive"
-                          : "bg-muted-foreground/30"
-                      }`}
+                      className="h-full rounded-full transition-all"
                       style={{
                         width: `${Math.min(
                           (userState?.account?.leverage ?? 0) * 10,
                           100
                         )}%`,
+                        background: userState?.account?.leverage != null
+                          ? userState.account.leverage <= 3
+                            ? "hsl(154,69%,49%)"
+                            : userState.account.leverage <= 5
+                            ? "hsl(35,92%,50%)"
+                            : "hsl(0,100%,65%)"
+                          : "hsl(var(--muted-foreground) / 0.3)",
                       }}
                     />
                   </div>
@@ -906,23 +893,22 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="bg-gradient-to-br from-accent/20 to-card border border-accent/20 rounded-2xl p-6 relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-accent/20 blur-[50px] rounded-full translate-x-10 -translate-y-10" />
-                <h3 className="text-lg font-bold mb-2">Pro Tip</h3>
-                <p className="text-sm text-muted-foreground mb-4 relative z-10">
-                  Funding rates on SOL-PERP have increased by 0.02% in the last
-                  4 hours. Consider increasing position size.
-                </p>
-                <Button
-                  variant="outline"
-                  className="w-full border-accent/30 text-accent hover:bg-accent/10 hover:text-accent"
-                  onClick={() => {
-                    // TODO: Implement analysis view
-                    console.log("View Analysis clicked");
-                  }}
-                >
-                  View Analysis
-                </Button>
+              <div className="bg-card border border-border rounded-2xl p-6 shadow-lg shadow-black/20">
+                <div className="flex items-start gap-3">
+                  <div className="p-2 rounded-lg bg-accent/10 text-accent shrink-0">
+                    <Lightbulb className="w-4 h-4" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-sm font-bold mb-1">Pro Tip</h3>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      Funding rates on SOL-PERP have increased by 0.02% in the last
+                      4 hours. Consider increasing position size.
+                    </p>
+                    <Button asChild variant="ghost" size="sm" className="w-full border-border hover:bg-muted text-muted-foreground">
+                      <Link href="/scanner">View Analysis</Link>
+                    </Button>
+                  </div>
+                </div>
               </div>
             </motion.div>
           </div>
@@ -935,31 +921,31 @@ export default function Home() {
           >
             <PositionsTable positions={data.positions} />
           </motion.div>
-        </main>
-      ) : !isError ? (
-        // No data found (404 case)
-        <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-4">
-          <div className="p-4 rounded-full bg-muted text-muted-foreground mb-4">
-            <Search className="w-10 h-10" />
+          </>
+        ) : !isError ? (
+          <div className="flex flex-col items-center justify-center min-h-[40vh] text-center p-4">
+            <div className="p-4 rounded-full bg-muted text-muted-foreground mb-4">
+              <Search className="w-10 h-10" />
+            </div>
+            <h2 className="text-xl font-bold mb-2">No strategy data found</h2>
+            <p className="text-muted-foreground mb-6 max-w-md text-sm">
+              We couldn&apos;t find any funding payment records for &quot;
+              {walletKey === MOCK_ACCOUNT_KEY ? MOCK_ACCOUNT_DISPLAY : walletKey}
+              &quot;. Try a different wallet address or load demo data.
+            </p>
+            <Button
+              onClick={() => {
+                setWalletKey(MOCK_ACCOUNT_KEY);
+                setInputValue(MOCK_ACCOUNT_DISPLAY);
+                setHasClearedDefault(false);
+              }}
+              className="bg-primary hover:bg-primary/90"
+            >
+              Load Demo Data
+            </Button>
           </div>
-          <h2 className="text-xl font-bold mb-2">No strategy data found</h2>
-          <p className="text-muted-foreground mb-6 max-w-md text-sm">
-            We couldn&apos;t find any funding payment records for &quot;
-            {walletKey === MOCK_ACCOUNT_KEY ? MOCK_ACCOUNT_DISPLAY : walletKey}
-            &quot;. Try a different wallet address or load demo data.
-          </p>
-          <Button
-            onClick={() => {
-              setWalletKey(MOCK_ACCOUNT_KEY);
-              setInputValue(MOCK_ACCOUNT_DISPLAY);
-              setHasClearedDefault(false);
-            }}
-            className="bg-primary hover:bg-primary/90"
-          >
-            Load Demo Data
-          </Button>
-        </div>
-      ) : null}
+        ) : null}
+      </main>
     </div>
   );
 }
