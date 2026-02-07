@@ -1,0 +1,18 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "framework": "vite",
+  "functions": {
+    "api/**/*.ts": {
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    { "source": "/api/strategies/:walletSubkey", "destination": "/api/strategies/[walletSubkey]" },
+    { "source": "/api/yield/funding-rates", "destination": "/api/yield/funding-rates" },
+    { "source": "/api/yield/delta-neutral", "destination": "/api/yield/delta-neutral" },
+    { "source": "/api/yield/perps-without-spot", "destination": "/api/yield/perps-without-spot" },
+    { "source": "/api/yield/spot-rates/:marketIndex", "destination": "/api/yield/spot-rates/[marketIndex]" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ]
+}
